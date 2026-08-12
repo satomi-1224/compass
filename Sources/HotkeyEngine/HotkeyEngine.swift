@@ -173,7 +173,9 @@ private func handleHotkeyEvent(
         nil,
         &hotKeyID
     )
-    guard status == noErr else { return status }
+    // **失敗しても `eventNotHandledErr` を返す。** それ以外の値を返すと Carbon は
+    // 「処理した」と見なし、次のハンドラへ渡らずイベントを飲み込む。
+    guard status == noErr else { return OSStatus(eventNotHandledErr) }
 
     // **自分が登録したものだけを扱う。** ハンドラは `GetApplicationEventTarget()` に
     // 付いているので、プロセス内の別のフレームワークや入力メソッドが登録した

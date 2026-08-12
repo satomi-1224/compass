@@ -16,12 +16,11 @@ public final class FileProvider {
 
     /// Spotlight から読み取る上限。
     ///
-    /// `*a*` のような広いパターンはホーム配下の数万件に当たる。全件を候補へ
-    /// 変換してから並べ替えるとメインスレッドが入力中に固まる。**打ち切ったことは
-    /// ログに残す。**
+    /// 広いパターンはホーム配下の数万件に当たる。全件を候補へ変換してから
+    /// 並べ替えるとメインスレッドが入力中に固まる。**打ち切ったことはログに残す。**
     nonisolated static let maxScanned = 2000
 
-    /// これより短いクエリでは探さない。
+    /// ASCII でこれより短いクエリでは探さない。
     ///
     /// 1 文字だとパターンが `*a*` になってほとんどのファイルに当たる。絞り込めて
     /// いない結果を並べても選べないし、変換のコストだけが乗る。
@@ -57,8 +56,13 @@ public final class FileProvider {
     ) {
         cancel()
 
-        let trimmed = text.trimmingCharacters(in: .whitespaces)
-        guard trimmed.count >= Self.minimumQueryLength else {
+        // **パターン文字を落とした形で判断し、探し、並べ替える。**
+        // 生の入力で長さを測ると `f **` が 2 文字として通り、`*` に開いて
+        // 全ファイルに当たる。生の入力で並べ替えると、`*` がリテラルとして
+        // 探されて結果が全部落ちる。
+        let effective = Self.effectiveQuery(
+            for: text.trimmingCharacters(in: .whitespaces))
+        guard Self.isSearchable(effective) else {
             completion([])
             return
         }
@@ -67,8 +71,14 @@ public final class FileProvider {
         // **部分列マッチをワイルドカードで表現する。** Spotlight に fuzzy は無いので
         // `dcm` を `*d*c*m*` に開いて粗く集め、並べ替えは FuzzyMatcher に任せる。
         query.predicate = NSPredicate(
-            format: "kMDItemFSName LIKE[cd] %@", Self.wildcardPattern(for: trimmed))
+            format: "kMDItemFSName LIKE[cd] %@", Self.wildcardPattern(for: effective))
         query.searchScopes = scopes.map { ($0 as NSString).expandingTildeInPath }
+        // **並び順を決めておく。** 上限で切るとき順序が不定だと、同じ入力でも
+        // 違う 2000 件を見ることになる。最近更新したものを優先すれば探している
+        // ものが入る見込みが高く、切り取りも決定的になる。
+        query.sortDescriptors = [
+            NSSortDescriptor(key: kMDItemFSContentChangeDate as String, ascending: false)
+        ]
 
         generation += 1
         let generation = self.generation
@@ -87,7 +97,7 @@ public final class FileProvider {
                 guard self.generation == generation, let running = self.query else { return }
 
                 let candidates = Self.candidates(
-                    from: running, matching: trimmed, limit: limit, log: self.log)
+                    from: running, matching: effective, limit: limit, log: self.log)
                 self.cancel()
                 self.warnIfIndexLooksDisabled(resultCount: candidates.count)
                 completion(candidates)
@@ -95,7 +105,7 @@ public final class FileProvider {
         }
 
         guard query.start() else {
-            log.error("ファイル検索を開始できなかった: \(trimmed)")
+            log.error("ファイル検索を開始できなかった: \(effective)")
             cancel()
             completion([])
             return
@@ -127,19 +137,33 @@ public final class FileProvider {
                 + "（`mdutil -s /` で確認、`sudo mdutil -i on /` で有効化）")
     }
 
-    // MARK: - 変換
+    // MARK: - クエリの整形
 
-    /// `"dcm"` → `"*d*c*m*"`。
+    /// パターンとして意味を持つ文字を落とした、実際に探す文字列。
     ///
-    /// Spotlight のパターンで意味を持つ `*` と `?` は落とす。残しても部分列の
-    /// 意味にはならず、意図しない広がり方をする。
-    nonisolated static func wildcardPattern(for text: String) -> String {
-        var pattern = ""
-        for character in text where character != "*" && character != "?" {
-            pattern += "*\(character)"
-        }
-        return pattern.isEmpty ? "*" : pattern + "*"
+    /// **Spotlight のパターンも fuzzy の並べ替えも、どちらもこれを使う。**
+    /// 片方だけに使うと、探せているのに並べ替えで全部落ちる。
+    nonisolated static func effectiveQuery(for text: String) -> String {
+        String(text.filter { $0 != "*" && $0 != "?" })
     }
+
+    /// 探すに足る長さか。`effectiveQuery` を通した文字列を渡す。
+    ///
+    /// ASCII の 1 文字は `*a*` になってほとんどのファイルに当たるが、
+    /// **漢字やかなの 1 文字は十分に絞れる。** 文字種で分ける。
+    nonisolated static func isSearchable(_ effective: String) -> Bool {
+        guard !effective.isEmpty else { return false }
+        if effective.count >= minimumQueryLength { return true }
+        return effective.allSatisfy { !$0.isASCII }
+    }
+
+    /// `"dcm"` → `"*d*c*m*"`。`effectiveQuery` を通した文字列を渡す。
+    nonisolated static func wildcardPattern(for effective: String) -> String {
+        guard !effective.isEmpty else { return "*" }
+        return effective.reduce(into: "") { $0 += "*\($1)" } + "*"
+    }
+
+    // MARK: - 変換
 
     private static func candidates(
         from query: NSMetadataQuery, matching text: String, limit: Int, log: Log
@@ -165,8 +189,10 @@ public final class FileProvider {
         }
 
         if total > scanned {
-            // 黙って切らない。「絞り込めば出る」という手がかりを残す。
-            log.debug("ファイル検索が \(total) 件に当たった。先頭 \(scanned) 件だけを見た")
+            // 黙って切らない。**`debug` では既定のログレベルで出ないので `warn`。**
+            log.warn(
+                "ファイル検索が \(total) 件に当たった。最近更新した \(scanned) 件だけを見た"
+                    + "（絞り込むと目的のものが入りやすくなる）")
         }
 
         // Spotlight の並びは当てにできない。スコアで並べ直す。

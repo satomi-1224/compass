@@ -29,6 +29,8 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
     private static let separatorThickness: CGFloat = 1
     /// 画面の上端からどれだけ下げるか。上寄り中央に出す（requirements.md 3.2）。
     private static let verticalInset: CGFloat = 0.18
+    /// 画面の下端に残す余白。ぴったり接すると見づらい。
+    private static let bottomMargin: CGFloat = 20
 
     private let panel: KeyablePanel
     private let input = NSTextField()
@@ -101,7 +103,13 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
     /// （requirements.md 3.2）。`NSScreen.main` はキーウィンドウのある画面を返すので、
     /// メニューバーを持つ画面（`screens.first`）を使う。
     private func layout() {
-        let rows = min(table.count, maxVisibleRows)
+        let area = NSScreen.screens.first?.visibleFrame
+
+        // **画面から出ないように行数を抑える。** `max_results` は 50 まで許して
+        // いるので、そのまま使うと候補が画面の下へ突き抜けて選べない
+        // （20 行で 929pt、50 行で 2249pt になる）。
+        let rows = min(table.count, maxVisibleRows, area.map(Self.rowsThatFit) ?? maxVisibleRows)
+
         let listHeight = rows > 0 ? CGFloat(rows) * CandidateTable.rowHeight : 0
         let separatorSpace = rows > 0 ? Self.separatorThickness : 0
 
@@ -113,12 +121,11 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
         // 制約で決まる内容の高さと同じ値を使う。ここがずれると入力欄が切れる。
         let height = Self.inputHeight + separatorSpace + listHeight
 
-        guard let screen = NSScreen.screens.first else {
+        guard let area else {
             panel.setContentSize(NSSize(width: panel.frame.width, height: height))
             return
         }
 
-        let area = screen.visibleFrame
         let width = panel.frame.width
         let x = area.midX - width / 2
         // 上端を固定して下へ伸ばす。候補が増えても入力欄が動かない。
@@ -127,6 +134,13 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
             NSRect(x: x.rounded(), y: (top - height).rounded(), width: width, height: height),
             display: true
         )
+    }
+
+    /// 上端を固定したまま画面に収まる行数。
+    private static func rowsThatFit(in area: NSRect) -> Int {
+        let available =
+            area.height * (1 - verticalInset) - inputHeight - separatorThickness - bottomMargin
+        return max(1, Int(available / CandidateTable.rowHeight))
     }
 
     // MARK: - 組み立て
@@ -166,8 +180,10 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
         container.addSubview(separator)
         container.addSubview(table)
 
-        let separatorHeight = separator.heightAnchor.constraint(
-            equalToConstant: Self.separatorThickness)
+        // **初期値は候補が無いときの値（0）にする。** panel は `inputHeight` で
+        // 作られるので、1 のままだと `layout()` が走るまで「48pt の窓に 49pt の
+        // 内容」という食い違った制約になる。
+        let separatorHeight = separator.heightAnchor.constraint(equalToConstant: 0)
         let tableHeight = table.heightAnchor.constraint(equalToConstant: 0)
         self.separatorHeight = separatorHeight
         self.tableHeight = tableHeight

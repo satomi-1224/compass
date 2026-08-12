@@ -79,8 +79,16 @@ public enum FuzzyMatcher {
                     return left.score.value > right.score.value
                 }
                 // **同点は名前順で決める。** 到着順に依存させると同じ入力で並びが変わる。
-                return left.candidate.title.localizedStandardCompare(right.candidate.title)
-                    == .orderedAscending
+                let byTitle = left.candidate.title.localizedStandardCompare(
+                    right.candidate.title)
+                if byTitle != .orderedSame {
+                    return byTitle == .orderedAscending
+                }
+                // **同名なら id（パス）で決める。** `sorted(by:)` は安定と保証されて
+                // いないうえ、入力は辞書の値なのでハッシュシードで並びが変わる。
+                // `README.md` が複数あるとき、どれが limit に残るかが実行ごとに
+                // 変わってしまう。
+                return left.candidate.id < right.candidate.id
             }
             .prefix(limit)
             .map(\.candidate)

@@ -117,4 +117,23 @@ struct FuzzyMatcherTests {
         let backward = FuzzyMatcher.filter(names.reversed().map(candidate), query: "chro", limit: 9)
         #expect(forward.map(\.title) == backward.map(\.title))
     }
+
+    /// **同名のファイルは珍しくない**（`README.md` など）。名前だけで決めると
+    /// `sorted(by:)` の不安定さと辞書のハッシュ順が漏れて、どれが limit に残るかが
+    /// 実行ごとに変わる。
+    @Test("同名の候補はパスで順序が決まる")
+    func breaksTiesByPathWhenTitlesMatch() {
+        let paths = ["/c/README.md", "/a/README.md", "/b/README.md"]
+        let candidates = paths.map {
+            Candidate(id: $0, title: "README.md", action: .open(path: $0))
+        }
+
+        let forward = FuzzyMatcher.filter(candidates, query: "readme", limit: 3)
+        let backward = FuzzyMatcher.filter(candidates.reversed(), query: "readme", limit: 3)
+
+        #expect(forward.map(\.id) == ["/a/README.md", "/b/README.md", "/c/README.md"])
+        #expect(forward.map(\.id) == backward.map(\.id))
+        // limit で切っても同じものが残る。
+        #expect(FuzzyMatcher.filter(candidates, query: "readme", limit: 1).map(\.id) == ["/a/README.md"])
+    }
 }

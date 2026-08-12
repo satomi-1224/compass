@@ -149,34 +149,49 @@ struct FileProviderTests {
         #expect(FileProvider.wildcardPattern(for: "a") == "*a*")
     }
 
-    /// `*` と `?` を残すと部分列の意味にならず、意図しない広がり方をする。
-    @Test("パターン文字は落とす")
+    /// **Spotlight のパターンと fuzzy の並べ替えは同じ文字列を使う。** 片方だけに
+    /// 適用すると、探せているのに `*` がリテラルとして扱われて全件落ちる。
+    @Test("パターン文字は探す前に落とす")
     func stripsPatternCharacters() {
-        #expect(FileProvider.wildcardPattern(for: "a*b") == "*a*b*")
-        #expect(FileProvider.wildcardPattern(for: "a?b") == "*a*b*")
+        #expect(FileProvider.effectiveQuery(for: "a*b") == "ab")
+        #expect(FileProvider.effectiveQuery(for: "a?b") == "ab")
+        #expect(FileProvider.effectiveQuery(for: "dcm") == "dcm")
+        #expect(FileProvider.effectiveQuery(for: "**") == "")
     }
 
-    @Test("パターン文字だけなら全件パターンになる")
-    func patternOnlyBecomesWildcard() {
-        #expect(FileProvider.wildcardPattern(for: "*") == "*")
-        #expect(FileProvider.wildcardPattern(for: "") == "*")
+    /// `f **` は 2 文字だが、開くと `*` になって全ファイルに当たる。
+    /// **長さは落とした後の文字列で測る。**
+    @Test("パターン文字だけのクエリでは探さない")
+    func rejectsPatternOnlyQuery() {
+        #expect(FileProvider.isSearchable(FileProvider.effectiveQuery(for: "**")) == false)
+        #expect(FileProvider.isSearchable(FileProvider.effectiveQuery(for: "*a")) == false)
+        #expect(FileProvider.isSearchable(FileProvider.effectiveQuery(for: "*ab")))
     }
 
-    /// 1 文字だとパターンが `*a*` になってほとんどのファイルに当たる。絞り込めて
-    /// いない数万件を候補へ変換すると、入力中にメインスレッドが固まる。
+    /// ASCII 1 文字は広すぎるが、**漢字やかなの 1 文字は十分に絞れる。**
+    /// 一律で 2 文字にすると `f 本` が引けなくなる。
+    @Test("非 ASCII なら 1 文字でも探す")
+    func allowsSingleNonASCII() {
+        #expect(FileProvider.isSearchable("a") == false)
+        #expect(FileProvider.isSearchable("ab"))
+        #expect(FileProvider.isSearchable("本"))
+        #expect(FileProvider.isSearchable("あ"))
+        #expect(FileProvider.isSearchable("") == false)
+    }
+
     @MainActor
-    @Test("短すぎるクエリでは探さず、その場で空を返す")
-    func skipsShortQuery() {
+    @Test("探せないクエリではその場で空を返す")
+    func skipsUnsearchableQuery() {
         let provider = FileProvider()
         var results: [[Candidate]] = []
 
-        provider.search("a", scopes: ["~"], limit: 9) { results.append($0) }
-        provider.search(" ", scopes: ["~"], limit: 9) { results.append($0) }
-        provider.search("", scopes: ["~"], limit: 9) { results.append($0) }
+        for text in ["a", " ", "", "**", "*a"] {
+            provider.search(text, scopes: ["~"], limit: 9) { results.append($0) }
+        }
 
         // クエリを投げていないので同期で返る。
         let allEmpty = results.allSatisfy { $0.isEmpty }
-        #expect(results.count == 3)
+        #expect(results.count == 5)
         #expect(allEmpty)
         provider.cancel()
     }
