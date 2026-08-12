@@ -25,11 +25,23 @@ let package = Package(
         // （requirements.md 6章）。
         .target(name: "SearchUI", dependencies: ["CompassCore"]),
 
+        // 全コピー内容をディスクに永続化するという責務の性質がランチャーと異なるため
+        // 独立させてある。丸ごと切り離す判断に備える（requirements.md 2章）。
+        .target(name: "ClipboardHistory", dependencies: ["CompassCore"]),
+
+        .target(name: "Snippets", dependencies: ["CompassCore"]),
+
         .executableTarget(
-            name: "compass", dependencies: ["CompassCore", "HotkeyEngine", "SearchUI"]),
+            name: "compass",
+            dependencies: [
+                "CompassCore", "HotkeyEngine", "SearchUI", "ClipboardHistory", "Snippets",
+            ]
+        ),
 
         .testTarget(name: "CompassCoreTests", dependencies: ["CompassCore"]),
         .testTarget(name: "HotkeyEngineTests", dependencies: ["HotkeyEngine"]),
         .testTarget(name: "SearchUITests", dependencies: ["SearchUI"]),
+        .testTarget(name: "ClipboardHistoryTests", dependencies: ["ClipboardHistory"]),
+        .testTarget(name: "SnippetsTests", dependencies: ["Snippets"]),
     ]
 )

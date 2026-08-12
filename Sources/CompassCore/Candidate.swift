@@ -39,4 +39,28 @@ public enum CandidateAction: Equatable, Sendable {
     case openURL(URL)
     /// クリップボードへ載せて `Cmd+V` を送る。
     case paste(String)
+    /// 外部コマンドの出力を貼る。
+    ///
+    /// **選ばれてから実行する。** 一覧を開くだけで走らせると、副作用のある
+    /// コマンドを書いていた場合に選んでいないのに実行されてしまう。
+    case pasteCommandOutput(String)
+}
+
+/// 一覧に 1 行で出すための整形。
+///
+/// クリップボード履歴もスニペットも複数行のテキストを持ちうる。そのまま出すと
+/// 行が崩れるので、畳んで切る。
+public enum TextSummary {
+
+    public static func line(of text: String, limit: Int = 120) -> String {
+        let folded = text
+            .replacingOccurrences(of: "\r\n", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "\t", with: " ")
+            .split(separator: " ", omittingEmptySubsequences: true)
+            .joined(separator: " ")
+        guard folded.count > limit else { return folded }
+        return String(folded.prefix(limit)) + "…"
+    }
 }

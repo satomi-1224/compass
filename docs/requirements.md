@@ -113,9 +113,11 @@ f report   → ファイル: ~/Documents/report.md
 
 - テキストのみ（画像・ファイルは対象外）
 - 最大 50 件、重複は排除して先頭に移動
-- ポーリング間隔 0.8 秒
-- 永続化する（現行の `hs.settings` 相当）
+- ポーリング間隔 0.8 秒（`NSPasteboard` に変更通知は無いのでポーリングしかない）
+- 永続化する（現行の `hs.settings` 相当）。保存先は `~/Library/Application Support/compass/clipboard.json`、**パーミッションは `0600`**
 - 選択すると `Cmd+V` を送出してペースト
+
+**パスワードマネージャが「保存するな」と印を付けた内容は履歴に残さない。** `org.nspasteboard.ConcealedType` などの pasteboard type を見る（[nspasteboard.org](http://nspasteboard.org/) の慣例）。当初の要件には無かったが、全コピー内容をディスクへ永続化する以上、拾うとパスワードが平文で残ってしまう。
 
 ### 3.5 スニペット
 

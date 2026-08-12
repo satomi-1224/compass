@@ -5,6 +5,20 @@ import Foundation
 /// `Cmd+V` の V。`kVK_ANSI_V` と同値。
 private let keyCodeV: CGKeyCode = 9
 
+extension String {
+    /// 末尾の改行だけを落とす。
+    ///
+    /// `trimmingCharacters(in: .newlines)` は先頭も削るため使わない。
+    /// 意図して先頭を空行で始めるスニペットを壊さないようにする。
+    func trimmingTrailingNewlines() -> String {
+        var result = self
+        while result.hasSuffix("\n") || result.hasSuffix("\r") {
+            result.removeLast()
+        }
+        return result
+    }
+}
+
 /// 外部コマンドを実行する。
 ///
 /// ホットキーの実行モデルは**外部コマンド実行のみ**（requirements.md 3.3）。
@@ -49,6 +63,8 @@ public enum ActionRunner {
             open(url: url, log: log)
         case .paste(let text):
             paste(text, log: log)
+        case .pasteCommandOutput(let command):
+            pasteOutput(of: command, log: log)
         }
     }
 
@@ -84,6 +100,62 @@ public enum ActionRunner {
             return
         }
         sendCommandV()
+    }
+
+    /// 外部コマンドの出力をクリップボードへ載せて `Cmd+V` を送る。
+    ///
+    /// **メインスレッドを止めない。** 出力が揃うまで貼れないが、その間 UI が
+    /// 固まると押した感触が悪い。裏で走らせて揃ってから貼る。
+    public static func pasteOutput(
+        of command: String, timeout: TimeInterval = 5, log: Log = .shared
+    ) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let output = capture(command, timeout: timeout, log: log) else { return }
+            DispatchQueue.main.async {
+                paste(output, log: log)
+            }
+        }
+    }
+
+    /// コマンドの標準出力を読む。呼び出し元のスレッドをブロックする。
+    private static func capture(
+        _ command: String, timeout: TimeInterval, log: Log
+    ) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", command]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+        } catch {
+            log.error("実行できなかった: \(command) — \(error.localizedDescription)")
+            return nil
+        }
+
+        // 終わらないコマンドでスレッドを抱えたままにしない。
+        let killer = DispatchWorkItem {
+            guard process.isRunning else { return }
+            process.terminate()
+            log.error("\(Int(timeout)) 秒で終わらなかったので止めた: \(command)")
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
+
+        // **読み切ってから待つ。** 先に waitUntilExit すると、パイプのバッファが
+        // 埋まった時点で子プロセスが書き込みで止まり、互いに待ち合う。
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        killer.cancel()
+
+        guard let text = String(data: data, encoding: .utf8) else {
+            log.error("出力を UTF-8 として読めなかった: \(command)")
+            return nil
+        }
+        // コマンド出力は改行で終わるが、貼るときは要らない。
+        return text.trimmingTrailingNewlines()
     }
 
     /// `Cmd+V` を HID レベルで送出する。権限が無ければ黙って無視される。

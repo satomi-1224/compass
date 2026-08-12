@@ -1,7 +1,9 @@
 import AppKit
+import ClipboardHistory
 import CompassCore
 import HotkeyEngine
 import SearchUI
+import Snippets
 
 /// 不可視の常駐プロセス（requirements.md 5.3）。
 ///
@@ -17,14 +19,21 @@ final class CompassDelegate: NSObject, NSApplicationDelegate {
     private let store = ConfigStore()
     private let engine = HotkeyEngine()
     private var search: SearchController?
+    private var clipboard: ClipboardHistory?
+    private var snippets: SnippetLibrary?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
 
-        // 設定は窓を開くたびに読み直させる。リロードがそのまま反映される。
+        // 設定は使うたびに読み直させる。リロードがそのまま反映される。
         let search = SearchController(config: { [weak self] in self?.store.config ?? Config() })
         search.start()
         self.search = search
+
+        clipboard = ClipboardHistory(settings: { [weak self] in
+            self?.store.config.clipboard ?? Config.Clipboard()
+        })
+        snippets = SnippetLibrary(definitions: { [weak self] in self?.store.snippets ?? [] })
 
         engine.onTrigger = { [weak self] binding in
             self?.perform(binding.action)
@@ -70,6 +79,10 @@ final class CompassDelegate: NSObject, NSApplicationDelegate {
             // 登録できなかったキーは黙って消えると気づけない。
             Notifier.shared.report(failures)
         }
+        // `enabled` や `poll_interval` が変わったら監視をやり直す。start() は
+        // stop してから始めるので、繰り返し呼んでも積み上がらない。
+        clipboard?.start()
+
         log.debug(
             "設定を適用: trigger=\(store.hotkeys.trigger.symbols)"
                 + " bindings=\(engine.registeredCount)/\(store.hotkeys.bindings.count)"
@@ -88,12 +101,27 @@ final class CompassDelegate: NSObject, NSApplicationDelegate {
             case .search:
                 search?.toggle(.search)
             case .clipboard:
-                // Phase 4 で繋ぐ。
-                log.info("クリップボード履歴は未実装")
+                toggleList(placeholder: "クリップボード履歴") { [weak self] in
+                    self?.clipboard?.candidates() ?? []
+                }
             case .snippets:
-                // Phase 5 で繋ぐ。
-                log.info("スニペット一覧は未実装")
+                toggleList(placeholder: "スニペット") { [weak self] in
+                    self?.snippets?.candidates() ?? []
+                }
             }
+        }
+    }
+
+    /// 一覧を開閉する。
+    ///
+    /// 候補は**開くときだけ**作る。閉じるときに作っても捨てるだけで、
+    /// クリップボード履歴のように件数が多いと無駄になる。
+    private func toggleList(placeholder: String, candidates: () -> [Candidate]) {
+        guard let search else { return }
+        if search.isVisible {
+            search.dismiss()
+        } else {
+            search.present(.list(placeholder: placeholder, candidates: candidates()))
         }
     }
 
@@ -135,15 +163,29 @@ final class CompassDelegate: NSObject, NSApplicationDelegate {
 
 // MARK: - 起動
 
-// `--print-apps` は窓も常駐も要らない。列挙して終わる。
-//
-// Spotlight を使わない走査が意図した範囲を拾えているかを確かめるための入口。
-// `--print-apps | grep Claude` で PWA が出るかを見る、といった使い方をする。
+// 一覧を出すだけのオプションは窓も常駐も要らない。出して終わる。
+
+// Spotlight を使わない走査が意図した範囲を拾えているかを確かめる。
+// `--print-apps | grep Remap` で PWA が出るかを見る、といった使い方をする。
 if CommandLine.arguments.contains("--print-apps") {
     let provider = AppProvider()
     provider.refresh()
     for candidate in provider.candidates(matching: "", limit: .max) {
         print("\(candidate.title)\t\(candidate.subtitle ?? "")")
+    }
+    exit(0)
+}
+
+// `hotkeys.toml` に書けるキー名。
+if CommandLine.arguments.contains("--print-keys") {
+    print(KeyTable.allNames.joined(separator: "\n"))
+    exit(0)
+}
+
+// `snippets.toml` の `body` に書けるプレースホルダ。
+if CommandLine.arguments.contains("--print-placeholders") {
+    for placeholder in SnippetExpander.placeholders {
+        print("\(placeholder.syntax)\t\(placeholder.meaning)")
     }
     exit(0)
 }
