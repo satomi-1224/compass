@@ -166,8 +166,16 @@ enum Log {
     static func append(_ text: String) {
         let entry = "==== run ====\n\(text)\n\n"
         let data = Data(entry.utf8)
-        guard let handle = try? FileHandle(forWritingTo: url) else {
+
+        // **既にあるファイルを上書きしない。** `write(to:)` は追記ではなく truncate
+        // なので、開けない理由が「まだ無い」以外（読み取り専用、ロック）のときに
+        // 積み上げた履歴を消してしまう。
+        guard FileManager.default.fileExists(atPath: url.path) else {
             try? data.write(to: url)
+            return
+        }
+        guard let handle = try? FileHandle(forWritingTo: url) else {
+            NSLog("compass-phase0: ログを開けなかった: \(url.path)")
             return
         }
         defer { try? handle.close() }
@@ -213,6 +221,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var keyMonitor: Any?
     private var keyDownObserved = false
+    /// 検証のために書き換える前のクリップボード。判定が済んだら戻す。
+    private var savedClipboard: String?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
@@ -252,6 +262,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // マーカーは実行ごとに変える。前回の残りが入っていても誤判定しない。
         let marker = "COMPASS_PHASE0_\(UInt32.random(in: 0..<0xFFFF_FFFF))"
         let pasteboard = NSPasteboard.general
+        // **元の内容を控えておく。** README の手順では何度も実行するので、
+        // そのたびにユーザーのクリップボードを潰すのは行儀が悪い。
+        savedClipboard = pasteboard.string(forType: .string)
         pasteboard.clearContents()
         pasteboard.setString(marker, forType: .string)
 
@@ -276,6 +289,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func finish(trusted: Bool, outcome: String) {
+        restoreClipboard()
+
         let bundle = Bundle.main
         let executablePath = bundle.executablePath ?? "(unavailable)"
 
@@ -324,6 +339,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setVerdict(_ text: String, color: NSColor) {
         verdictLabel.stringValue = text
         verdictLabel.textColor = color
+    }
+
+    /// 検証で書き換えたクリップボードを元に戻す。判定が済んだあとに呼ぶ。
+    private func restoreClipboard() {
+        guard let saved = savedClipboard else { return }
+        savedClipboard = nil
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(saved, forType: .string)
     }
 
     private func requestPermission() {

@@ -34,6 +34,9 @@ in
         **Nix ストアには置かないこと。** アクセシビリティ権限はコード署名とパスを含む
         アプリの同一性に紐づくため、更新のたびにパスが変わると権限が外れる。
         リポジトリの `./scripts/install-app.sh` が既定でこの場所へ入れる。
+        **既定から変えるなら、スクリプト側にも同じ場所を渡すこと**
+        （`COMPASS_APP=… ./scripts/install-app.sh`）。ずれると launchd が
+        居ない実行ファイルを起動し続ける。
 
         Swift 6 が要るため nixpkgs の Swift（5.10）ではビルドできない。
         このモジュールが受け持つのは**設定・自動起動・ログの置き場所**だけ。
@@ -173,15 +176,18 @@ in
       }
     ];
 
-    home.file = lib.mkMerge [
+    # **`xdg.configFile` を使う。** compass は `XDG_CONFIG_HOME` を優先して設定を
+    # 探すため、`.config` を直接書くと、`xdg.configHome` を変えている環境で
+    # 置いた場所と読む場所がずれる。
+    xdg.configFile = lib.mkMerge [
       (lib.mkIf (configSource != null) {
-        ".config/compass/config.toml".source = configSource;
+        "compass/config.toml".source = configSource;
       })
       (lib.mkIf (hotkeysSource != null) {
-        ".config/compass/hotkeys.toml".source = hotkeysSource;
+        "compass/hotkeys.toml".source = hotkeysSource;
       })
       (lib.mkIf (snippetsSource != null) {
-        ".config/compass/snippets.toml".source = snippetsSource;
+        "compass/snippets.toml".source = snippetsSource;
       })
     ];
 
@@ -193,14 +199,25 @@ in
         # 理由不明で落ちたときに上げ直す。落ちたままだとホットキーが全て死ぬ。
         KeepAlive = true;
         ProcessType = "Interactive";
-        EnvironmentVariables.COMPASS_LOG_LEVEL = cfg.logLevel;
+        EnvironmentVariables = {
+          COMPASS_LOG_LEVEL = cfg.logLevel;
+          # **設定の場所を明示する。** launchd から起動するとシェルの環境を
+          # 継承しないので、`XDG_CONFIG_HOME` を設定している環境では compass が
+          # モジュールの書いた場所を見ない。欠損は「空」として扱われ、成功時は
+          # 通知も出ないため、**設定が丸ごと無視されていることに気づけない。**
+          XDG_CONFIG_HOME = config.xdg.configHome;
+        };
         StandardOutPath = cfg.logFile;
         StandardErrorPath = cfg.logFile;
       };
     };
 
-    # **アプリの実体は Nix の管理外**なので、無ければここで気づけるようにする。
     home.activation.compassApp = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      # **launchd は StandardOutPath の親ディレクトリを作らない。** 無いと job が
+      # 起動できず、しかもログが唯一の観測手段なので何も残らない。
+      run mkdir -p ${lib.escapeShellArg (builtins.dirOf cfg.logFile)}
+
+      # **アプリの実体は Nix の管理外**なので、無ければここで気づけるようにする。
       if [ ! -x "${cfg.app}/Contents/MacOS/compass" ]; then
         warnEcho "compass.app が ${cfg.app} に無い。リポジトリで ./scripts/install-app.sh release を実行する"
       fi

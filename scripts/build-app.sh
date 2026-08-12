@@ -31,7 +31,10 @@ cp "$REPO_ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 cp "$BIN_PATH" "$APP/Contents/MacOS/compass"
 
 echo "==> 署名"
-if security find-identity -v -p codesigning 2>/dev/null | grep -q "\"$SIGNING_IDENTITY\""; then
+# **`-v` を付けない。** `-v` は「コード署名ポリシーで有効」なものだけを出すため、
+# 信頼設定をしていない自己署名証明書が除外される。見落とすと黙って ad-hoc へ
+# 落ちてしまい、この署名方式が防ごうとしている「リビルドで権限が外れる」を招く。
+if security find-identity -p codesigning 2>/dev/null | grep -q "\"$SIGNING_IDENTITY\""; then
   codesign --force --sign "$SIGNING_IDENTITY" --identifier "$BUNDLE_ID" "$APP"
   echo "    署名 ID: ${SIGNING_IDENTITY}（権限はビルドをまたいで維持される）"
 else
