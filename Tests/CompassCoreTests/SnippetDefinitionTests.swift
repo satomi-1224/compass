@@ -30,6 +30,31 @@ struct SnippetDefinitionTests {
         #expect(snippets[2].body == .command("git branch --show-current"))
     }
 
+    /// home-manager の `pkgs.formats.toml` が生成する形をそのまま読む。
+    /// **キーはアルファベット順に並ぶ**（`body` が `title` より前に来る）。
+    @Test("home-manager が生成する TOML を読める")
+    func parsesGeneratedTOML() throws {
+        let toml = """
+            [[snippets]]
+            body = "{date}"
+            title = "now"
+
+            [[snippets]]
+            body = "@satomi1224_poke"
+            title = "TwitterID"
+
+            [[snippets]]
+            body_command = "git branch --show-current"
+            title = "branch"
+            """
+
+        let snippets = try SnippetDefinition.parseAll(toml)
+
+        // 定義の順序は保たれる。
+        #expect(snippets.map(\.title) == ["now", "TwitterID", "branch"])
+        #expect(snippets[2].body == .command("git branch --show-current"))
+    }
+
     @Test("空なら 0 件")
     func emptyIsNoSnippets() throws {
         #expect(try SnippetDefinition.parseAll("").isEmpty)

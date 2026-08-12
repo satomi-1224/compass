@@ -52,6 +52,41 @@ struct ConfigTests {
         #expect(config.search.keywords[0] == Config.Keyword(prefix: "f", kind: .file))
     }
 
+    /// home-manager の `pkgs.formats.toml` が生成する形をそのまま読む。
+    /// **`[search.files]` のあとに `[[search.keywords]]` が来る並び**でも、
+    /// 配列テーブルは `search` 直下として解釈される。
+    @Test("home-manager が生成する TOML を読める")
+    func parsesGeneratedTOML() throws {
+        let toml = """
+            [appearance]
+            max_results = 9
+            width = 680
+
+            [clipboard]
+            enabled = true
+            max_items = 50
+            poll_interval = 0.8
+
+            [search.files]
+            scopes = ["~"]
+
+            [[search.keywords]]
+            kind = "web"
+            prefix = "g"
+            url = "https://www.google.com/search?q={query}"
+            """
+
+        let config = try Config.parse(toml)
+
+        #expect(config.appearance.maxResults == 9)
+        #expect(config.appearance.width == 680)
+        #expect(config.clipboard.maxItems == 50)
+        #expect(config.search.files.scopes == ["~"])
+        #expect(config.search.keywords.count == 1)
+        #expect(config.search.keywords[0].prefix == "g")
+        #expect(config.search.keywords[0].kind == .web)
+    }
+
     @Test("空の TOML は既定値になる")
     func emptyIsDefault() throws {
         #expect(try Config.parse("") == Config())

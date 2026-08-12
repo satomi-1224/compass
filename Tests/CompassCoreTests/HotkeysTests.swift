@@ -37,6 +37,35 @@ struct HotkeysTests {
         #expect(terminal?.keyCode == KeyTable.keyCode(for: "t"))
     }
 
+    /// home-manager の `pkgs.formats.toml` が生成する形をそのまま読む。
+    /// **キーはアルファベット順に並び替えられ、`$` を含む値はリテラル文字列になる。**
+    /// モジュールとパーサが食い違ったらここで落ちる。
+    @Test("home-manager が生成する TOML を読める")
+    func parsesGeneratedTOML() throws {
+        let toml = """
+            trigger = "cmd+alt+shift"
+
+            [actions]
+            space = "search"
+            v = "clipboard"
+            w = "snippets"
+
+            [commands]
+            k = 'open "$HOME/Applications/Chrome Apps.localized/Remap.app"'
+            t = "open -a WezTerm"
+            """
+
+        let hotkeys = try Hotkeys.parse(toml)
+
+        #expect(hotkeys.trigger == [.command, .option, .shift])
+        #expect(hotkeys.bindings.count == 5)
+        // リテラル文字列なので `$HOME` はそのまま入る。展開は `sh` に任せる。
+        let remap = hotkeys.bindings.first { $0.key == "k" }
+        #expect(
+            remap?.action
+                == .command(#"open "$HOME/Applications/Chrome Apps.localized/Remap.app""#))
+    }
+
     @Test("trigger を省略すると既定になる")
     func triggerDefaults() throws {
         let hotkeys = try Hotkeys.parse(#"[commands]\#nt = "open -a WezTerm""#)
