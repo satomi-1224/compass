@@ -1,0 +1,9 @@
+# Swift / SPM
+.build/
+*.xcodeproj
+
+# 組み立てた .app（scripts と Makefile が作り直す）
+build/
+
+# macOS
+.DS_Store
