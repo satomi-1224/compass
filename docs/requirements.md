@@ -306,7 +306,12 @@ return = "pgrep -f MagicBoard && pkill -f MagicBoard || ~/ghq/github.com/satomi-
 
 `⌘⌥⇧+K` の Remap は `~/Applications/Chrome Apps.localized/Remap.app` を開いている（4 章の設定例は `~/Applications/Remap.app` と略記しているが、実体はこちら）。
 
-> **現行設定が壊れている**: `command_launcher_local.lua` は `~/Work/dotfiles/magicboard/MagicBoard` を参照しているが、このパスは存在しない。実体は `~/ghq/github.com/satomi-1224/dotfiles-global/magicboard/MagicBoard` へ移っており、**現在 `⌘⌥⇧+Return` は何も起動しない**。移植時は新しいパスを使う。
+> **現行設定が壊れている箇所が 2 つある**（どちらも今は何も起動しない）。
+>
+> 1. `command_launcher_local.lua` の `~/Work/dotfiles/magicboard/MagicBoard` は存在しない。実体は `~/ghq/github.com/satomi-1224/dotfiles-global/magicboard/MagicBoard` へ移っている
+> 2. `command_launcher.lua` の `⌘⌥⇧+Space` が開く `~/Applications/Chrome Apps.localized/Claude.app` も存在しない（同ディレクトリには `Remap.app` だけ）
+>
+> 2 は 1 章の「`⌘⌥⇧+Space` は Claude の起動に使われているので別のキーへ移す必要がある」という前提を崩す。**移す対象が無いため、検索窓へ明け渡すだけで済む。** 突き合わせの詳細は [migration.md](./migration.md)。
 
 `~` や `$HOME` を展開するかは外部コマンドの実行方法（`sh -c` を通すか）に依存する。Phase 2 で確定する。
 

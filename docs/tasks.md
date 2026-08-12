@@ -223,10 +223,22 @@
 
 **完了条件**: Hammerspoon を停止しても日常の操作が成立する。
 
-- [ ] 現行 Hammerspoon の全ホットキーが compass 側に揃っているか突き合わせる
-- [ ] 現行のクリップボード履歴を引き継ぐか、捨てるかを決める
-- [ ] スニペット（`now` / `TwitterID` / `mail`）を `snippets.toml` へ移す
+突き合わせの結果と、そのまま貼れる home-manager の設定は
+[migration.md](./migration.md) にまとめた。
+
+- [x] 現行 Hammerspoon の全ホットキーが compass 側に揃っているか突き合わせる
+  - **現行設定のうち 2 つが既に壊れていた**（どちらも今は何も起動しない）
+    - `⌘⌥⇧+Space` が開く `Chrome Apps.localized/Claude.app` が存在しない
+      → 要件では「Claude を別のキーへ移す」としていたが、**移す対象が無い**
+    - `⌘⌥⇧+Return` の MagicBoard のパスが `~/Work/dotfiles/…` のまま
+- [x] 現行のクリップボード履歴を引き継ぐか、捨てるかを決める → **捨てる**
+  - 数日で入れ替わる性質のもの。必要なら
+    `defaults read org.hammerspoon.Hammerspoon clipboard_history` で取り出せる
+- [x] スニペット（`now` / `TwitterID` / `mail`）を `snippets.toml` へ移す
+  - `now` は `body = "{date}"` で表現できる
 - [ ] **並行運用期間**: Hammerspoon 側のキーバインドを外し、compass だけで数日運用する
+  - **Carbon のホットキー登録はプロセス間で排他にならない。** Hammerspoon が動いた
+    ままでも compass 側の登録は成功する（実測）ので、外さないと両方が掴む
 - [ ] 問題がなければ dotfiles から Hammerspoon 設定を削除する
 - [ ] `Cmd+Space` の扱いを決める（Spotlight を戻すか、空けたままにするか）
 

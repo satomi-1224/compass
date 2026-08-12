@@ -77,6 +77,7 @@ public final class SearchController {
         case .list(let placeholder, let candidates):
             listSource = candidates
             window.present(placeholder: placeholder, candidates: candidates)
+            log.debug("一覧を開いた: \(placeholder) \(candidates.count) 件")
         }
     }
 

@@ -52,18 +52,40 @@ final class CompassDelegate: NSObject, NSApplicationDelegate {
             log.warn("設定ディレクトリを監視できない: \(store.directory.path)")
         }
 
-        showSearchIfRequested()
+        showWindowIfRequested()
     }
 
-    /// `--show-search [クエリ]` で起動直後に検索窓を出す。
+    /// 起動直後に窓を出す開発用の入口。
     ///
-    /// ホットキーを押さずに見た目と候補の出方を確かめるための開発用の入口。
-    /// 常用のホットキーが他のアプリと衝突している状況でも検証できる。
-    private func showSearchIfRequested() {
+    /// ```
+    /// --show-search [クエリ]   検索窓
+    /// --show-clipboard         クリップボード履歴
+    /// --show-snippets          スニペット一覧
+    /// ```
+    ///
+    /// ホットキーを押さずに見た目と候補の出方を確かめられる。常用のホットキーが
+    /// 他のアプリと衝突している状況でも検証できる。
+    private func showWindowIfRequested() {
         let arguments = CommandLine.arguments
-        guard let index = arguments.firstIndex(of: "--show-search") else { return }
 
-        log.info("--show-search: 起動直後に検索窓を出す")
+        if arguments.contains("--show-clipboard") {
+            log.info("--show-clipboard: クリップボード履歴を出す")
+            toggleList(placeholder: "クリップボード履歴") { [weak self] in
+                self?.clipboard?.candidates() ?? []
+            }
+            return
+        }
+
+        if arguments.contains("--show-snippets") {
+            log.info("--show-snippets: スニペット一覧を出す")
+            toggleList(placeholder: "スニペット") { [weak self] in
+                self?.snippets?.candidates() ?? []
+            }
+            return
+        }
+
+        guard let index = arguments.firstIndex(of: "--show-search") else { return }
+        log.info("--show-search: 検索窓を出す")
         search?.present(.search)
 
         let next = index + 1
