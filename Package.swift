@@ -17,8 +17,19 @@ let package = Package(
             dependencies: [.product(name: "TOMLDecoder", package: "TOMLDecoder")]
         ),
 
-        .executableTarget(name: "compass", dependencies: ["CompassCore"]),
+        // グローバルホットキーの登録。**SearchUI に依存させない。**
+        // 将来プロセスを分けたくなったときの退路を、モジュール境界で残しておく。
+        .target(name: "HotkeyEngine", dependencies: ["CompassCore"]),
+
+        // 検索窓。クリップボード履歴とスニペット一覧もこの UI を流用する
+        // （requirements.md 6章）。
+        .target(name: "SearchUI", dependencies: ["CompassCore"]),
+
+        .executableTarget(
+            name: "compass", dependencies: ["CompassCore", "HotkeyEngine", "SearchUI"]),
 
         .testTarget(name: "CompassCoreTests", dependencies: ["CompassCore"]),
+        .testTarget(name: "HotkeyEngineTests", dependencies: ["HotkeyEngine"]),
+        .testTarget(name: "SearchUITests", dependencies: ["SearchUI"]),
     ]
 )

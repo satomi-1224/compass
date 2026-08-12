@@ -1,5 +1,7 @@
 import AppKit
 import CompassCore
+import HotkeyEngine
+import SearchUI
 
 /// 不可視の常駐プロセス（requirements.md 5.3）。
 ///
@@ -13,9 +15,20 @@ final class CompassDelegate: NSObject, NSApplicationDelegate {
 
     private let log = Log.shared
     private let store = ConfigStore()
+    private let engine = HotkeyEngine()
+    private var search: SearchController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
+
+        // 設定は窓を開くたびに読み直させる。リロードがそのまま反映される。
+        let search = SearchController(config: { [weak self] in self?.store.config ?? Config() })
+        search.start()
+        self.search = search
+
+        engine.onTrigger = { [weak self] binding in
+            self?.perform(binding.action)
+        }
 
         let issues = store.load()
         if issues.isEmpty {
@@ -29,17 +42,59 @@ final class CompassDelegate: NSObject, NSApplicationDelegate {
         if !store.startWatching() {
             log.warn("設定ディレクトリを監視できない: \(store.directory.path)")
         }
+
+        showSearchIfRequested()
+    }
+
+    /// `--show-search [クエリ]` で起動直後に検索窓を出す。
+    ///
+    /// ホットキーを押さずに見た目と候補の出方を確かめるための開発用の入口。
+    /// 常用のホットキーが他のアプリと衝突している状況でも検証できる。
+    private func showSearchIfRequested() {
+        let arguments = CommandLine.arguments
+        guard let index = arguments.firstIndex(of: "--show-search") else { return }
+
+        log.info("--show-search: 起動直後に検索窓を出す")
+        search?.present(.search)
+
+        let next = index + 1
+        if arguments.indices.contains(next), !arguments[next].hasPrefix("--") {
+            search?.setQuery(arguments[next])
+        }
     }
 
     /// 読み込んだ設定を各モジュールへ渡す。
     private func applyConfiguration() {
-        // Phase 2 でホットキーの登録・再登録をここに繋ぐ。
+        let failures = engine.apply(store.hotkeys)
+        if !failures.isEmpty {
+            // 登録できなかったキーは黙って消えると気づけない。
+            Notifier.shared.report(failures)
+        }
         log.debug(
             "設定を適用: trigger=\(store.hotkeys.trigger.symbols)"
-                + " bindings=\(store.hotkeys.bindings.count)"
+                + " bindings=\(engine.registeredCount)/\(store.hotkeys.bindings.count)"
                 + " snippets=\(store.snippets.count)"
                 + " clipboard=\(store.config.clipboard.enabled ? "on" : "off")"
         )
+    }
+
+    /// ホットキーが押されたときの振り分け。
+    private func perform(_ action: Action) {
+        switch action {
+        case .command(let command):
+            ActionRunner.run(command)
+        case .builtin(let builtin):
+            switch builtin {
+            case .search:
+                search?.toggle(.search)
+            case .clipboard:
+                // Phase 4 で繋ぐ。
+                log.info("クリップボード履歴は未実装")
+            case .snippets:
+                // Phase 5 で繋ぐ。
+                log.info("スニペット一覧は未実装")
+            }
+        }
     }
 
     /// **`Cmd+V` を解釈させるには Edit メニューが必要**（requirements.md 7.4）。
@@ -79,6 +134,19 @@ final class CompassDelegate: NSObject, NSApplicationDelegate {
 }
 
 // MARK: - 起動
+
+// `--print-apps` は窓も常駐も要らない。列挙して終わる。
+//
+// Spotlight を使わない走査が意図した範囲を拾えているかを確かめるための入口。
+// `--print-apps | grep Claude` で PWA が出るかを見る、といった使い方をする。
+if CommandLine.arguments.contains("--print-apps") {
+    let provider = AppProvider()
+    provider.refresh()
+    for candidate in provider.candidates(matching: "", limit: .max) {
+        print("\(candidate.title)\t\(candidate.subtitle ?? "")")
+    }
+    exit(0)
+}
 
 let application = NSApplication.shared
 // delegate は weak 参照なので、グローバルに置いて保持する。

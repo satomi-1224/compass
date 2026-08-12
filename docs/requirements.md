@@ -76,9 +76,32 @@ f report   → ファイル: ~/Documents/report.md
 
 #### アプリ・ファイルの列挙
 
-**両方とも Spotlight index (`NSMetadataQuery`) を使う。** 実装を共有でき、インストール場所を問わずアプリを拾える。
+**アプリは自前で走査し、ファイルは Spotlight index (`NSMetadataQuery`) を使う。**
 
-現行 `search.lua` の `appDirs` は `~/Applications` の直下しか走査しないため、`~/Applications/Chrome Apps.localized/` 配下の PWA（Claude.app, Remap.app）が検索に出ていない。これらがホットキー直実行にしか登録されていないのはそのためで、Spotlight 化により解消される。
+当初はどちらも Spotlight で統一する計画だったが、**このマシンでは Spotlight のインデックスが無効**だった（7.5）。アプリ列挙まで動かなくなるため、インデックスの有無に依存しない走査へ変えた。
+
+| | 方式 | 理由 |
+|---|---|---|
+| アプリ | 既知の置き場を 2 階層まで走査 | インデックスが無くても動く。対象が数百件なので窓を開くたびに走査しても速い |
+| ファイル | Spotlight index | ホーム全体を毎回走査するのは現実的でない |
+
+走査するアプリ置き場:
+
+```
+/Applications
+/System/Applications
+/System/Library/CoreServices
+~/Applications
+```
+
+- **`.app` の中には入らない。** 内部のヘルパーや更新ツールを拾うと候補が埋まる
+- **シンボリックリンクは追う。** home-manager は `~/Applications/Home Manager Apps` を nix store へのリンクとして張るため、追わないと配置したアプリが 1 つも拾えない（実際に `mpv.app` が漏れた）。実体のパスで訪問済みを覚えて重複と循環を防ぐ
+- Spotlight の live update が使えないので、**窓を開くたびに走査し直す**
+- 表示名は**ファイル名から `.app` を落としたもの**。ローカライズ名は使わない（7.2）
+
+これで現行 `search.lua` の積み残しは解消した。`appDirs` が `~/Applications` の直下しか走査していなかったために出ていなかった `~/Applications/Chrome Apps.localized/Remap.app` と、`~/Applications/Home Manager Apps/mpv.app` が拾えることを実測した（計 230 件）。
+
+> 要件に挙げていた `Claude.app` は現在 `~/Applications/Chrome Apps.localized/` に無い（`Claude Code URL Handler.app` のみ）。移植対象から外れる。
 
 ### 3.3 ホットキー直接実行
 
@@ -226,7 +249,9 @@ body_command = "git branch --show-current"
 |---|---|---|
 | プロセス構成 | 単一アプリ | 設定ロード・ホットキー登録・アクション実行を共有できる。分割すると `⌘⌥⇧+T` をどちらが処理するかの調停が必要になる |
 | クリップボード履歴の配置 | compass に統合 | 「候補を絞り込む → 選ぶ → 実行」というアプリ検索と同一の UI パターンで、`SearchUI` を流用できる |
-| ファイル検索 | Spotlight index | 自前インデックス不要。アプリ列挙と実装を共有できる |
+| アプリ列挙 | 自前走査 | このマシンでは Spotlight が無効で `NSMetadataQuery` が 0 件を返した（7.5）。インデックスの有無に依存させない |
+| ファイル検索 | Spotlight index | ホーム全体を毎回走査するのは現実的でない |
+| 検索窓の実装 | AppKit（`NSPanel` + `NSTableView`） | `Esc` / `↑↓` / `Enter` を field editor の `doCommandBy` で確実に捕まえられる。`.nonactivatingPanel` でフォーカスを奪わない挙動も作りやすい |
 | 設定の 2 層構成 | 採らない | Nix がマシンごとに生成するため、アプリ側でマージする必要がない |
 | トリガー | 1 種のみ・例外なし | 全キーが同一トリガー配下に並ぶため衝突検出が単純になり、他アプリとのキーの奪い合いも 1 種だけ考えればよい |
 | 頻度学習 | 行わない | 同じ入力に同じ結果が返る予測可能性を優先 |
@@ -256,12 +281,17 @@ ad-hoc は **cdhash だけ**で identifier すら含まないため、リビル�
 
 cdhash と inode が入れ替わっても `AXIsProcessTrusted()` が true のままであることを 3 回のリビルドで確認した。検証の詳細と再現手順は [experiments/phase0-permission/README.md](../experiments/phase0-permission/README.md)。
 
-### 7.2 デフォルト値の確定が必要な項目
+### 7.2 デフォルト値（Phase 3 で確定）
 
-- Web 検索キーワードのデフォルトセット（`g` = Google、`gh` = GitHub を想定）
-- ファイル検索の Spotlight 探索範囲（ホームディレクトリのみを想定）
-- 検索窓の外観の細部（角丸、ブラー、行の高さ、アイコンサイズ）
-- アプリ名の日本語・かなマッチングの扱い
+| 項目 | 決めた値 |
+|---|---|
+| 検索キーワード | `f` = ファイル / `g` = Google / `gh` = GitHub |
+| ファイル検索の探索範囲 | `["~"]` |
+| 検索窓の幅・表示件数 | 680 / 9 件 |
+| 外観 | 角丸 12、`NSVisualEffectView` の `.popover`、行の高さ 44、アイコン 28、入力欄 48・22pt |
+| 表示位置 | 画面上端から 18% の高さに**上端を固定**。候補が増えても入力欄が動かない |
+
+**アプリ名は英名（ファイル名）だけで検索する。** ローカライズ名は候補に入れていない。`FuzzyMatcher` が見る文字列を 1 つに保つためで、「システム設定」を `System Settings` で引けるが逆はできない。日本語・かなマッチングは未対応のまま残す。
 
 ### 7.3 現行設定からの移植対象
 
@@ -283,3 +313,23 @@ return = "pgrep -f MagicBoard && pkill -f MagicBoard || ~/ghq/github.com/satomi-
 **`Cmd+V` を解釈させるには `NSApp.mainMenu` に Edit メニューが必要。** AppKit はキー等価物をメインメニューで解決するため、メニューが無いと `Cmd+V` の keyDown はビューまで届くのに `paste:` へ変換されず何も起きない。Phase 0 の検証で、送出は成功しているのにペーストされない状態を実測した。
 
 `LSUIElement = true` でメニューバーを表示しなくても `NSApp.mainMenu` の設定自体は必要になる。検索窓・クリップボード履歴・スニペット一覧の入力欄で編集操作（ペースト・全選択）を効かせるため、Phase 1 で最小のメインメニューを組む。
+
+### 7.5 Spotlight のインデックスが無効（Phase 3 で判明）
+
+このマシンでは Spotlight のインデックスが無効になっている。
+
+```
+$ mdutil -s /
+/:
+	Indexing disabled.
+```
+
+`mdfind` も `NSMetadataQuery` も 1 件も返さない。**ファイル検索はインデックスに依存するため使えない。** アプリ検索は自前走査へ変えたので影響しない（3.2）。
+
+ファイル検索を使うなら有効化が必要:
+
+```
+sudo mdutil -i on /
+```
+
+意図して無効にしているなら、`config.toml` からファイル検索のキーワード（`f`）を外す。0 件が返ったときは起動ログに手がかりを残す（**通知は出さない。** 5.4 の対象外）。

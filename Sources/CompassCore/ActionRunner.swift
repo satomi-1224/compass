@@ -1,4 +1,9 @@
+import AppKit
+import ApplicationServices
 import Foundation
+
+/// `Cmd+V` の V。`kVK_ANSI_V` と同値。
+private let keyCodeV: CGKeyCode = 9
 
 /// 外部コマンドを実行する。
 ///
@@ -33,5 +38,62 @@ public enum ActionRunner {
             log.error("実行できなかった: \(command) — \(error.localizedDescription)")
             return false
         }
+    }
+
+    /// 候補を選んだときの実行。
+    public static func run(_ action: CandidateAction, log: Log = .shared) {
+        switch action {
+        case .open(let path):
+            open(path: path, log: log)
+        case .openURL(let url):
+            open(url: url, log: log)
+        case .paste(let text):
+            paste(text, log: log)
+        }
+    }
+
+    /// 既定のアプリで開く。アプリバンドルなら起動する。
+    public static func open(path: String, log: Log = .shared) {
+        let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+        NSWorkspace.shared.open(url)
+        log.debug("開く: \(url.path)")
+    }
+
+    public static func open(url: URL, log: Log = .shared) {
+        NSWorkspace.shared.open(url)
+        log.debug("開く: \(url.absoluteString)")
+    }
+
+    /// クリップボードへ載せて `Cmd+V` を送る。
+    ///
+    /// **アクセシビリティ権限が必要**（requirements.md 7.1）。権限が無いときは
+    /// クリップボードに載せるところまでやって、手で `Cmd+V` できる状態にする。
+    /// 黙って何も起きないより、載っているほうが復帰しやすい。
+    ///
+    /// 呼ぶ側は**検索窓を閉じてフォーカスが戻ってから**呼ぶこと。開いたまま送ると
+    /// 自分の入力欄に貼られる。
+    public static func paste(_ text: String, log: Log = .shared) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+
+        guard AXIsProcessTrusted() else {
+            log.error(
+                "アクセシビリティ権限が無いため Cmd+V を送れない。"
+                    + "クリップボードには載せたので手で貼れる")
+            return
+        }
+        sendCommandV()
+    }
+
+    /// `Cmd+V` を HID レベルで送出する。権限が無ければ黙って無視される。
+    private static func sendCommandV() {
+        guard let source = CGEventSource(stateID: .hidSystemState) else { return }
+        let down = CGEvent(keyboardEventSource: source, virtualKey: keyCodeV, keyDown: true)
+        let up = CGEvent(keyboardEventSource: source, virtualKey: keyCodeV, keyDown: false)
+        down?.flags = .maskCommand
+        up?.flags = .maskCommand
+        down?.post(tap: .cghidEventTap)
+        up?.post(tap: .cghidEventTap)
     }
 }
