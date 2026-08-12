@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import ClipboardHistory
 import CompassCore
 import HotkeyEngine
@@ -52,7 +53,30 @@ final class CompassDelegate: NSObject, NSApplicationDelegate {
             log.warn("設定ディレクトリを監視できない: \(store.directory.path)")
         }
 
+        requestAccessibilityIfNeeded()
         showWindowIfRequested()
+    }
+
+    /// ペーストを使う設定なのに権限が無ければ、許可を求める。
+    ///
+    /// **プロンプトを出さないとシステム設定の一覧にも現れない。** ユーザーが「+」から
+    /// 手で探して追加するしかなくなる。要件 5.3 の「正常時は黙る」に反しないよう、
+    /// クリップボード履歴とスニペットのどちらも割り当てていなければ何もしない。
+    private func requestAccessibilityIfNeeded() {
+        guard !AXIsProcessTrusted() else { return }
+
+        let usesPaste = store.hotkeys.bindings.contains { binding in
+            guard case .builtin(let action) = binding.action else { return false }
+            return action == .clipboard || action == .snippets
+        }
+        guard usesPaste else { return }
+
+        log.warn(
+            "アクセシビリティ権限が無い。クリップボード履歴とスニペットのペーストに必要"
+                + "（許可するまで、選んでもクリップボードに載るだけで貼られない）")
+        // `kAXTrustedCheckOptionPrompt` は C の `extern CFStringRef` で、Swift 6 からは
+        // 共有可変状態として扱われて参照できない。値は変わらないのでリテラルで書く。
+        _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
     }
 
     /// 起動直後に窓を出す開発用の入口。
