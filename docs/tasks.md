@@ -42,40 +42,62 @@
 
 ### ビルド
 
-- [ ] Swift パッケージ構成を切る（`CompassCore` / `HotkeyEngine` / `SearchUI` / `ClipboardHistory` / `Snippets`）
+- [x] `CompassCore` を作る（設定ロードと Action 実行。**UI に依存しない**）
+- [ ] 残りのモジュールは各フェーズで足す
+  - `HotkeyEngine` → Phase 2 / `SearchUI` → Phase 3 / `ClipboardHistory` → Phase 4 / `Snippets` → Phase 5
   - `HotkeyEngine` が `SearchUI` に依存しないことをモジュール境界で担保する
-- [ ] `.app` バンドルの生成（`Info.plist`、`LSUIElement = true` で Dock 非表示）
-- [ ] `scripts/build-app.sh` — `swift build` → バンドル組み立て → `compass-dev` で署名
+- [x] `.app` バンドルの生成（`Info.plist`、`LSUIElement = true` で Dock 非表示）
+  - `lsappinfo` で `type="UIElement"` を確認（前景アプリは `type="Foreground"`）
+- [x] `scripts/build-app.sh` — `swift build` → バンドル組み立て → `compass-dev` で署名
   - 署名 ID が無ければ ad-hoc に落とし、**権限が外れる旨を警告する**
-- [ ] `scripts/install-app.sh` — `~/Applications/compass.app` へ入れ替え、launchd を読み直す
+- [x] `scripts/install-app.sh` — `~/Applications/compass.app` へ入れ替え、launchd を読み直す
   - 動いているプロセスは先に止める。バンドルを差し替えると署名の検証に失敗して落ちる
-  - `bootout` したら必ず `bootstrap` で戻す（戻さないと登録が消えて `kickstart` が失敗する）
-- [ ] flake で home-manager モジュールを提供する
+  - **plist が無いなら `bootout` しない**（戻す手段が無く、登録を消して終わる）
+  - 隣に置いてから `mv` で差し替える（コピー失敗でアプリが 1 つも残らない事態を避ける）
+- [x] flake で home-manager モジュールを提供する
   - 受け持つのは**設定・自動起動・ログの置き場所のみ**。本体は store に置かない
+- [x] `scripts/env.sh` — Xcode が無い環境で `Testing.framework` を解決する
+  - CLT だけだと SPM が自力で見つけられない。探索パスと rpath を明示的に渡す
 
 > **却下**: 「Nix flake で `.app` までビルドする」は Phase 0 の結論により採らない（requirements.md 5.1）。
 
 ### 設定
 
-- [ ] TOML パーサを導入する（[dduan/TOMLDecoder](https://github.com/dduan/TOMLDecoder) に決定。comet と揃える）
-- [ ] `config.toml` / `hotkeys.toml` / `snippets.toml` のスキーマを型として定義
+- [x] TOML パーサを導入する（[dduan/TOMLDecoder](https://github.com/dduan/TOMLDecoder) に決定。comet と揃える）
+  - キーは `.convertFromSnakeCase` で変換する。設定は snake_case で書く
+- [x] `config.toml` / `hotkeys.toml` / `snippets.toml` のスキーマを型として定義
   - `hotkeys.toml` は `trigger` 1 行 + `[actions]` + `[commands]` のセクション分割
-- [ ] 3 ファイルのロード処理（ファイル欠損は空として扱い、エラーにしない）
-- [ ] バリデーション
-  - [ ] 不明なキー名、必須項目の欠落
-  - [ ] **`[actions]` と `[commands]` の間のキー衝突**（同じキーが両方にある）
-  - [ ] `[actions]` の値が組み込みアクション名（`search` / `clipboard` / `snippets`）であること
-- [ ] **エラー時は直前の正常な設定を保持して動き続ける**
-- [ ] エラーのみ通知センターに出す（正常時は完全に無音）
-- [ ] ファイル監視による自動リロード
-  - `darwin-rebuild switch` でのシンボリックリンク張り替えを検知できることを実機確認する
+  - `body` / `body_command` は enum で排他にした（両方書けない）
+- [x] 3 ファイルのロード処理（ファイル欠損は空として扱い、エラーにしない）
+- [x] バリデーション
+  - [x] 不明なキー名、必須項目の欠落
+  - [x] **`[actions]` と `[commands]` の間のキー衝突**（同じキーが両方にある）
+    - **キーコードで見る。** `return` と `enter` は同じ物理キーなので、綴りが違っても衝突
+  - [x] `[actions]` の値が組み込みアクション名（`search` / `clipboard` / `snippets`）であること
+  - [x] 範囲外の値は**丸めずにエラーにする**（丸めると設定が効いていないことに気づけない）
+  - [x] `trigger` に cmd / alt / ctrl のいずれかを要求する（shift だけだと通常のタイピングを奪う）
+- [x] **エラー時は直前の正常な設定を保持して動き続ける**
+  - 成功したファイルだけが差し替わる。壊れたファイルは直前の内容を保つ
+- [x] エラーのみ通知センターに出す（正常時は完全に無音）
+  - 許可要求は**最初にエラーを出すときだけ**。エラーが起きなければダイアログも出ない
+- [x] ファイル監視による自動リロード
+  - [x] `darwin-rebuild switch` でのシンボリックリンク張り替えを検知できることを実機確認した
+  - [x] ディレクトリ自体がシンボリックリンクの場合は**親ディレクトリ**を見る
+    （`open` はリンクを追うため、リンクを張り替えても古い実体を見続ける）
+
+> **`config.toml` の未知セクション・未知キーは検出しない。** `.convertFromSnakeCase` を
+> 使っている関係で、`allKeys` から得られる綴りが設定に書いた綴り（snake_case）と
+> 一致せず、報告がかえって分かりにくくなる。上の「不明なキー名」は `hotkeys.toml` の
+> キー名（`t` / `space` など）を指す。必要になったら生の TOML 木を別に読んで足す。
 
 ### 常駐
 
 - [ ] launchd エージェントでログイン時に自動起動し、落ちても復帰する
-- [ ] メニューバーにも Dock にも一切出ないことを確認
-- [ ] 最小のメインメニュー（Edit）を組む
+  - home-manager モジュールは書いた（`KeepAlive = true`）。**実機での登録は未確認**
+- [x] メニューバーにも Dock にも一切出ないことを確認
+- [x] 最小のメインメニュー（Edit）を組む
   - **`NSApp.mainMenu` が無いと `Cmd+V` が `paste:` に解決されない**（Phase 0 で実測）。`LSUIElement = true` でメニューバーを出さなくても設定自体は必要（requirements.md 7.4）
+  - Quit にキー等価物は付けない（検索窓を開いている最中の `Cmd+Q` で常駐が落ちると全て死ぬ）
 
 ---
 
