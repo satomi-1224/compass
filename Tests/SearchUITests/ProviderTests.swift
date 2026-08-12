@@ -1,3 +1,4 @@
+import CompassCore
 import Foundation
 import Testing
 
@@ -159,5 +160,30 @@ struct FileProviderTests {
     func patternOnlyBecomesWildcard() {
         #expect(FileProvider.wildcardPattern(for: "*") == "*")
         #expect(FileProvider.wildcardPattern(for: "") == "*")
+    }
+
+    /// 1 文字だとパターンが `*a*` になってほとんどのファイルに当たる。絞り込めて
+    /// いない数万件を候補へ変換すると、入力中にメインスレッドが固まる。
+    @MainActor
+    @Test("短すぎるクエリでは探さず、その場で空を返す")
+    func skipsShortQuery() {
+        let provider = FileProvider()
+        var results: [[Candidate]] = []
+
+        provider.search("a", scopes: ["~"], limit: 9) { results.append($0) }
+        provider.search(" ", scopes: ["~"], limit: 9) { results.append($0) }
+        provider.search("", scopes: ["~"], limit: 9) { results.append($0) }
+
+        // クエリを投げていないので同期で返る。
+        let allEmpty = results.allSatisfy { $0.isEmpty }
+        #expect(results.count == 3)
+        #expect(allEmpty)
+        provider.cancel()
+    }
+
+    @Test("読み取り上限が入っている")
+    func hasScanLimit() {
+        #expect(FileProvider.maxScanned > 0)
+        #expect(FileProvider.minimumQueryLength >= 2)
     }
 }

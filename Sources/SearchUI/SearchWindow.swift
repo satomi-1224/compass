@@ -26,14 +26,21 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
 
     private static let inputHeight: CGFloat = 48
     private static let cornerRadius: CGFloat = 12
+    private static let separatorThickness: CGFloat = 1
     /// 画面の上端からどれだけ下げるか。上寄り中央に出す（requirements.md 3.2）。
     private static let verticalInset: CGFloat = 0.18
 
     private let panel: KeyablePanel
     private let input = NSTextField()
+    private let separator = NSBox()
     private let table = CandidateTable()
     private let container = NSVisualEffectView()
     private let maxVisibleRows: Int
+
+    /// 高さは制約で決める。**隠すだけでは制約が残り、内容の高さと panel の高さが
+    /// 食い違って入力欄の上端が切れる**（実測で 48pt の窓に 49pt の内容が入った）。
+    private var separatorHeight: NSLayoutConstraint?
+    private var tableHeight: NSLayoutConstraint?
     private var resignObserver: NSObjectProtocol?
 
     init(width: CGFloat, maxVisibleRows: Int) {
@@ -95,9 +102,16 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
     /// メニューバーを持つ画面（`screens.first`）を使う。
     private func layout() {
         let rows = min(table.count, maxVisibleRows)
-        let listHeight = rows > 0 ? CGFloat(rows) * CandidateTable.rowHeight + 8 : 0
-        let height = Self.inputHeight + listHeight
+        let listHeight = rows > 0 ? CGFloat(rows) * CandidateTable.rowHeight : 0
+        let separatorSpace = rows > 0 ? Self.separatorThickness : 0
+
+        separator.isHidden = rows == 0
         table.isHidden = rows == 0
+        separatorHeight?.constant = separatorSpace
+        tableHeight?.constant = listHeight
+
+        // 制約で決まる内容の高さと同じ値を使う。ここがずれると入力欄が切れる。
+        let height = Self.inputHeight + separatorSpace + listHeight
 
         guard let screen = NSScreen.screens.first else {
             panel.setContentSize(NSSize(width: panel.frame.width, height: height))
@@ -133,6 +147,7 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
         container.wantsLayer = true
         container.layer?.cornerRadius = Self.cornerRadius
         container.layer?.masksToBounds = true
+        container.translatesAutoresizingMaskIntoConstraints = false
 
         input.font = .systemFont(ofSize: 22, weight: .light)
         input.isBordered = false
@@ -140,10 +155,7 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
         input.focusRingType = .none
         input.delegate = self
         input.translatesAutoresizingMaskIntoConstraints = false
-        // 入力中の変換候補が確定するまで通知が来ないと、日本語入力で候補が動かない。
-        input.cell?.sendsActionOnEndEditing = false
 
-        let separator = NSBox()
         separator.boxType = .separator
         separator.translatesAutoresizingMaskIntoConstraints = false
 
@@ -153,7 +165,12 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
         container.addSubview(input)
         container.addSubview(separator)
         container.addSubview(table)
-        container.translatesAutoresizingMaskIntoConstraints = false
+
+        let separatorHeight = separator.heightAnchor.constraint(
+            equalToConstant: Self.separatorThickness)
+        let tableHeight = table.heightAnchor.constraint(equalToConstant: 0)
+        self.separatorHeight = separatorHeight
+        self.tableHeight = tableHeight
 
         NSLayoutConstraint.activate([
             input.topAnchor.constraint(equalTo: container.topAnchor),
@@ -164,11 +181,13 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
             separator.topAnchor.constraint(equalTo: input.bottomAnchor),
             separator.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             separator.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            separatorHeight,
 
             table.topAnchor.constraint(equalTo: separator.bottomAnchor),
             table.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             table.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             table.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            tableHeight,
         ])
 
         panel.contentView = container

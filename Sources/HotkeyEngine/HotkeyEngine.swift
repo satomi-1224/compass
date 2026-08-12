@@ -21,7 +21,12 @@ public final class HotkeyEngine {
     }
 
     /// ホットキーを識別する 4 文字コード（`cmps`）。
-    private static let signature: OSType = 0x636D_7073
+    ///
+    /// **イベントハンドラで必ず突き合わせる。** ハンドラは
+    /// `GetApplicationEventTarget()` に付くため、プロセス内の別のフレームワークが
+    /// 登録したホットキーのイベントもここへ届く。
+    /// nonisolated にしておく。イベントハンドラは MainActor の外で走る。
+    fileprivate nonisolated static let signature: OSType = 0x636D_7073
 
     private let log: Log
     private var registrations: [UInt32: Registration] = [:]
@@ -123,7 +128,7 @@ public final class HotkeyEngine {
         let context = Unmanaged.passUnretained(self).toOpaque()
         let status = InstallEventHandler(
             GetApplicationEventTarget(),
-            hotkeyEventHandler,
+            handleHotkeyEvent,
             1,
             &eventType,
             context,
@@ -135,16 +140,27 @@ public final class HotkeyEngine {
     }
 
     /// Carbon のコールバックから呼ばれる。
-    fileprivate func handle(id: UInt32) {
-        guard let registration = registrations[id] else { return }
+    ///
+    /// - Returns: 自分が登録したキーだったか。false ならイベントを次のハンドラへ渡す。
+    fileprivate func handle(id: UInt32) -> Bool {
+        guard let registration = registrations[id] else { return false }
         log.debug("ホットキー: \(registration.binding.key)")
         onTrigger?(registration.binding)
+        return true
     }
 }
 
 /// Carbon に渡すコールバック。C 関数ポインタなのでキャプチャを持てない。
 /// `self` は `InstallEventHandler` の userData 経由で受け取る。
-private let hotkeyEventHandler: EventHandlerUPP = { _, event, context in
+///
+/// **クロージャを代入したグローバル定数にはしない。** 初期化式が MainActor に
+/// 触れると「nonisolated な文脈で MainActor 分離の既定値を使っている」として弾かれる。
+/// 関数として書けばキャプチャを持たないまま C 関数ポインタへ渡せる。
+private func handleHotkeyEvent(
+    _ callRef: EventHandlerCallRef?,
+    _ event: EventRef?,
+    _ context: UnsafeMutableRawPointer?
+) -> OSStatus {
     guard let event, let context else { return OSStatus(eventNotHandledErr) }
 
     var hotKeyID = EventHotKeyID()
@@ -159,6 +175,14 @@ private let hotkeyEventHandler: EventHandlerUPP = { _, event, context in
     )
     guard status == noErr else { return status }
 
+    // **自分が登録したものだけを扱う。** ハンドラは `GetApplicationEventTarget()` に
+    // 付いているので、プロセス内の別のフレームワークや入力メソッドが登録した
+    // ホットキーのイベントもここへ来る。id は 1 から順に振るだけなので、
+    // 突き合わせないと衝突した他人のキーで自分のアクションが走る。
+    guard hotKeyID.signature == HotkeyEngine.signature else {
+        return OSStatus(eventNotHandledErr)
+    }
+
     // **ポインタと構造体をクロージャへ渡さない。** non-Sendable な値を送ると
     // data race として弾かれる。`HotkeyEngine` は @MainActor なので暗黙に Sendable、
     // `id` は UInt32。どちらも先に取り出しておけば渡せる。
@@ -166,8 +190,9 @@ private let hotkeyEventHandler: EventHandlerUPP = { _, event, context in
     let id = hotKeyID.id
 
     // Carbon のイベントディスパッチはメインスレッドで走る。
-    MainActor.assumeIsolated {
+    let handled = MainActor.assumeIsolated {
         engine.handle(id: id)
     }
-    return noErr
+    // 知らない id を noErr で返すと、次のハンドラへ渡らずイベントを飲み込む。
+    return handled ? noErr : OSStatus(eventNotHandledErr)
 }

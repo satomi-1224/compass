@@ -134,8 +134,7 @@ public final class SearchController {
                 limit: current.search.files.maxResults
             ) { [weak self] candidates in
                 // 届くまでに入力が変わっているかもしれない。
-                guard let self, let window = self.window, window.query == text else { return }
-                _ = self
+                guard let window = self?.window, window.query == text else { return }
                 window.setCandidates(Array(candidates.prefix(limit)))
             }
 
@@ -157,20 +156,32 @@ public final class SearchController {
 
     // MARK: - 実行
 
+    /// 窓を閉じてフォーカスが元のアプリへ戻るまでの待ち時間。
+    private static let focusReturnDelay: TimeInterval = 0.1
+
     private func submit() {
         guard let candidate = window?.selected else { return }
         dismiss()
 
+        let log = self.log
         switch candidate.action {
         case .paste(let text):
-            // **閉じてフォーカスが戻るのを待つ。** 即座に送ると、まだ自分が
-            // キーウィンドウのままで入力欄に貼られる。
-            let log = self.log
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                ActionRunner.paste(text, log: log)
-            }
-        default:
+            pasteAfterFocusReturns { ActionRunner.paste(text, log: log) }
+
+        case .pasteCommandOutput(let command):
+            // **コマンドの実行も同じ遅延に載せる。** `echo` や
+            // `git branch --show-current` は数ミリ秒で終わるので、出力を待つだけでは
+            // まだ閉じ切っていない自分の入力欄に貼られてしまう。
+            pasteAfterFocusReturns { ActionRunner.pasteOutput(of: command, log: log) }
+
+        case .open, .openURL:
             ActionRunner.run(candidate.action, log: log)
         }
+    }
+
+    /// **閉じてフォーカスが戻るのを待ってから貼る。** 即座に送ると、まだ自分が
+    /// キーウィンドウのままで入力欄に貼られる。
+    private func pasteAfterFocusReturns(_ body: @escaping @Sendable () -> Void) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.focusReturnDelay, execute: body)
     }
 }
