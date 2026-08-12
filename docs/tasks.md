@@ -94,8 +94,13 @@
 
 ### 常駐
 
-- [ ] launchd エージェントでログイン時に自動起動し、落ちても復帰する
-  - home-manager モジュールは書いた（`KeepAlive = true`）。**実機での登録は未確認**
+- [x] launchd エージェントでログイン時に自動起動し、落ちても復帰する
+  - home-manager が生成する内容を模擬した plist で実機確認した
+    - `bootstrap` で起動する（`RunAtLoad = true`）
+    - `SIGTERM` で落としても**別プロセスとして復帰する**（pid 4450 → 4501、
+      `KeepAlive = true`）
+    - `StandardOutPath` へログが追記される（Log を毎回 flush する修正が効いている）
+  - **home-manager 経由での登録は switch が必要なので未確認**
 - [x] メニューバーにも Dock にも一切出ないことを確認
 - [x] 最小のメインメニュー（Edit）を組む
   - **`NSApp.mainMenu` が無いと `Cmd+V` が `paste:` に解決されない**（Phase 0 で実測）。`LSUIElement = true` でメニューバーを出さなくても設定自体は必要（requirements.md 7.4）
@@ -264,7 +269,8 @@
 実装は済んでいるが、実機で操作して確かめていないもの。**ここが閉じるまで Phase 1〜5 は
 完了にしない**（運用ルール）。
 
-- [ ] launchd での自動起動と、落ちたときの復帰（home-manager の switch が必要）
+- [ ] home-manager 経由での launchd 登録（switch が必要）
+  - launchd の設定自体は模擬 plist で確認済み（起動・KeepAlive での復帰・ログ）
 - [ ] 検索窓の操作（`↑↓` で選択、`Enter` で実行、`Esc` で閉じる、他のアプリへ移ると閉じる）
 - [ ] 候補が 0 件のときに入力欄が切れていないこと（レビュー 2 回目の指摘 5 の修正確認）
 - [ ] ホットキーの発火（押して実際にコマンドが走るか）
