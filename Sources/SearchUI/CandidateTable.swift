@@ -8,7 +8,7 @@ import CompassCore
 @MainActor
 final class CandidateTable: NSView {
 
-    static let rowHeight: CGFloat = 44
+    static var rowHeight: CGFloat { Metrics.rowHeight }
 
     /// ダブルクリックで実行された。
     var onActivate: (() -> Void)?
@@ -62,7 +62,7 @@ final class CandidateTable: NSView {
         column.resizingMask = .autoresizingMask
         tableView.addTableColumn(column)
         tableView.headerView = nil
-        tableView.rowHeight = Self.rowHeight
+        tableView.rowHeight = Metrics.rowHeight
         tableView.backgroundColor = .clear
         tableView.style = .plain
         tableView.selectionHighlightStyle = .regular
@@ -114,11 +114,45 @@ extension CandidateTable: NSTableViewDataSource, NSTableViewDelegate {
         view.configure(with: candidates[row])
         return view
     }
+
+    /// 角丸のハイライトを描くために差し替える。
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        let identifier = NSUserInterfaceItemIdentifier("rowBackground")
+        if let existing = tableView.makeView(withIdentifier: identifier, owner: self)
+            as? RoundedRowView
+        {
+            return existing
+        }
+        let view = RoundedRowView()
+        view.identifier = identifier
+        return view
+    }
 }
 
-/// 1 行の見た目。アイコン + タイトル + パス。
+/// 選択を角丸で塗る行。
+///
+/// 既定の矩形ハイライトは窓の角丸と噛み合わず、端で角が飛び出して見える。
 @MainActor
-private final class CandidateRowView: NSView {
+private final class RoundedRowView: NSTableRowView {
+
+    override func drawSelection(in dirtyRect: NSRect) {
+        guard selectionHighlightStyle != .none else { return }
+        let area = bounds.insetBy(
+            dx: Metrics.selectionInset, dy: Metrics.selectionVerticalInset)
+        let path = NSBezierPath(
+            roundedRect: area, xRadius: Metrics.selectionRadius,
+            yRadius: Metrics.selectionRadius)
+        NSColor.selectedContentBackgroundColor.setFill()
+        path.fill()
+    }
+}
+
+/// 1 行の見た目。アイコン + タイトル + サブタイトル。
+///
+/// `NSTableCellView` を継承しているのは `backgroundStyle` を受け取るため。
+/// 選択されたときに文字色を切り替えないと、青地に黒文字で読めなくなる。
+@MainActor
+private final class CandidateRowView: NSTableCellView {
 
     private let iconView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
@@ -128,35 +162,41 @@ private final class CandidateRowView: NSView {
         super.init(frame: .zero)
 
         iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.translatesAutoresizingMaskIntoConstraints = false
 
-        titleLabel.font = .systemFont(ofSize: 14)
+        titleLabel.font = Metrics.titleFont
         titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.usesSingleLineMode = true
         titleLabel.textColor = .labelColor
 
-        subtitleLabel.font = .systemFont(ofSize: 11)
+        // パスは末尾のほうが手がかりになる。中間を省く。
+        subtitleLabel.font = Metrics.subtitleFont
         subtitleLabel.lineBreakMode = .byTruncatingMiddle
+        subtitleLabel.usesSingleLineMode = true
         subtitleLabel.textColor = .secondaryLabelColor
 
         let text = NSStackView(views: [titleLabel, subtitleLabel])
         text.orientation = .vertical
         text.alignment = .leading
-        text.spacing = 1
+        text.spacing = Metrics.titleSpacing
+        text.translatesAutoresizingMaskIntoConstraints = false
 
-        let row = NSStackView(views: [iconView, text])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 10
-        row.edgeInsets = NSEdgeInsets(top: 0, left: 14, bottom: 0, right: 14)
-        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(iconView)
+        addSubview(text)
 
-        addSubview(row)
         NSLayoutConstraint.activate([
-            row.topAnchor.constraint(equalTo: topAnchor),
-            row.leadingAnchor.constraint(equalTo: leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: 28),
-            iconView.heightAnchor.constraint(equalToConstant: 28),
+            iconView.leadingAnchor.constraint(
+                equalTo: leadingAnchor, constant: Metrics.horizontalPadding),
+            iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: Metrics.iconWidth),
+            iconView.heightAnchor.constraint(equalToConstant: Metrics.iconWidth),
+
+            // **入力欄と同じ位置から文字を始める**（Metrics.textInset）。
+            text.leadingAnchor.constraint(
+                equalTo: leadingAnchor, constant: Metrics.textInset),
+            text.trailingAnchor.constraint(
+                lessThanOrEqualTo: trailingAnchor, constant: -Metrics.horizontalPadding),
+            text.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
 
@@ -176,6 +216,18 @@ private final class CandidateRowView: NSView {
         } else {
             iconView.image = nil
             iconView.isHidden = true
+        }
+    }
+
+    /// 選択されると背景が濃くなる。文字色を合わせないと読めない。
+    override var backgroundStyle: NSView.BackgroundStyle {
+        didSet {
+            let emphasized = backgroundStyle == .emphasized
+            titleLabel.textColor = emphasized ? .alternateSelectedControlTextColor : .labelColor
+            subtitleLabel.textColor =
+                emphasized
+                ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.8)
+                : .secondaryLabelColor
         }
     }
 }

@@ -136,16 +136,90 @@ struct AppProviderTests {
         try data.write(to: url)
     }
 
+    /// **メニューバーだけのアプリは落としてはいけない。** Docker や Hammerspoon が
+    /// これに当たり、ランチャーが最も役立つ相手。「Dock に出ない」は
+    /// 「ユーザーが起動しない」ではない。
+    @Test("メニューバーだけのアプリは残す")
+    func keepsMenuBarApps() {
+        for path in [
+            "/Applications/Docker.app",
+            "/Applications/Hammerspoon.app",
+            "/Users/x/Applications/comet.app",
+        ] {
+            #expect(
+                AppProvider.isHidden(path: path, uiElement: true, backgroundOnly: false) == false,
+                "\(path) を落としてはいけない")
+        }
+    }
+
     /// `/System/Library/CoreServices` にはユーザーが起動しないヘルパーが 100 以上
     /// あり、そのままだと候補の半分以上を占める（実測で 231 件のうち 133 件）。
-    @Test("Dock に出ないアプリを候補にしない")
-    func excludesBackgroundApps() throws {
-        let base = try makeTree(["Normal.app/Contents", "Agent.app/Contents"])
+    @Test("CoreServices 直下のメニューバーアプリだけ除く")
+    func excludesCoreServicesHelpers() {
+        #expect(
+            AppProvider.isHidden(
+                path: "/System/Library/CoreServices/AddPrinter.app",
+                uiElement: true, backgroundOnly: false))
+        #expect(
+            AppProvider.isHidden(
+                path: "/System/Library/CoreServices/PIPAgent.app",
+                uiElement: true, backgroundOnly: false))
+    }
+
+    /// Finder は CoreServices にあるが `LSUIElement` を持たない。
+    /// **ディレクトリごと外すと落ちてしまう**ので、フラグで判別している。
+    @Test("Finder は CoreServices にあっても残る")
+    func keepsFinder() {
+        #expect(
+            AppProvider.isHidden(
+                path: "/System/Library/CoreServices/Finder.app",
+                uiElement: false, backgroundOnly: false) == false)
+    }
+
+    /// UI を持たないので、起動しても何も起きない。どこにあっても外す。
+    @Test("LSBackgroundOnly はどこにあっても除く")
+    func excludesBackgroundOnly() {
+        #expect(
+            AppProvider.isHidden(
+                path: "/Applications/Daemon.app", uiElement: false, backgroundOnly: true))
+    }
+
+    /// **実際の CoreServices は `<string>YES</string>` で書いている。**
+    /// `"1"` と `"true"` しか見ていないと、狙った相手が残ってしまう。
+    @Test("YES / true / 1 を真として読む")
+    func readsBooleanForms() throws {
+        let base = try makeTree([
+            "Yes.app/Contents", "True.app/Contents", "One.app/Contents", "No.app/Contents",
+        ])
         defer { try? FileManager.default.removeItem(at: base) }
 
         try writePlist(
-            ["LSUIElement": true],
-            to: base.appendingPathComponent("Agent.app/Contents/Info.plist"))
+            ["LSBackgroundOnly": "YES"],
+            to: base.appendingPathComponent("Yes.app/Contents/Info.plist"))
+        try writePlist(
+            ["LSBackgroundOnly": true],
+            to: base.appendingPathComponent("True.app/Contents/Info.plist"))
+        try writePlist(
+            ["LSBackgroundOnly": "1"],
+            to: base.appendingPathComponent("One.app/Contents/Info.plist"))
+        try writePlist(
+            ["LSBackgroundOnly": "NO"],
+            to: base.appendingPathComponent("No.app/Contents/Info.plist"))
+
+        #expect(AppProvider.isHidden(base.appendingPathComponent("Yes.app").path))
+        #expect(AppProvider.isHidden(base.appendingPathComponent("True.app").path))
+        #expect(AppProvider.isHidden(base.appendingPathComponent("One.app").path))
+        #expect(AppProvider.isHidden(base.appendingPathComponent("No.app").path) == false)
+    }
+
+    @Test("走査でも LSBackgroundOnly を除く")
+    func scanExcludesBackgroundOnly() throws {
+        let base = try makeTree(["Normal.app/Contents", "Daemon.app/Contents"])
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        try writePlist(
+            ["LSBackgroundOnly": true],
+            to: base.appendingPathComponent("Daemon.app/Contents/Info.plist"))
         try writePlist(
             ["CFBundleName": "Normal"],
             to: base.appendingPathComponent("Normal.app/Contents/Info.plist"))
@@ -157,39 +231,12 @@ struct AppProviderTests {
         #expect(provider.candidates(matching: "", limit: 9).map(\.title) == ["Normal"])
     }
 
-    @Test("LSBackgroundOnly も除く")
-    func excludesBackgroundOnly() throws {
-        let base = try makeTree(["Daemon.app/Contents"])
-        defer { try? FileManager.default.removeItem(at: base) }
-        try writePlist(
-            ["LSBackgroundOnly": true],
-            to: base.appendingPathComponent("Daemon.app/Contents/Info.plist"))
-
-        #expect(AppProvider.isBackgroundApp(base.appendingPathComponent("Daemon.app").path))
-    }
-
-    /// `LSUIElement` は Bool でも文字列 `"1"` でも書ける。
-    @Test("文字列で書かれた LSUIElement も解釈する")
-    func acceptsStringFlag() throws {
-        let base = try makeTree(["A.app/Contents", "B.app/Contents"])
-        defer { try? FileManager.default.removeItem(at: base) }
-
-        try writePlist(
-            ["LSUIElement": "1"], to: base.appendingPathComponent("A.app/Contents/Info.plist"))
-        try writePlist(
-            ["LSUIElement": "0"], to: base.appendingPathComponent("B.app/Contents/Info.plist"))
-
-        #expect(AppProvider.isBackgroundApp(base.appendingPathComponent("A.app").path))
-        #expect(AppProvider.isBackgroundApp(base.appendingPathComponent("B.app").path) == false)
-    }
-
     /// 落とすと拾えるものが減るだけなので、読めないときは普通のアプリとして扱う。
     @Test("Info.plist が無ければ普通のアプリとして扱う")
     func treatsMissingPlistAsNormal() throws {
         let base = try makeTree(["NoPlist.app"])
         defer { try? FileManager.default.removeItem(at: base) }
-        #expect(
-            AppProvider.isBackgroundApp(base.appendingPathComponent("NoPlist.app").path) == false)
+        #expect(AppProvider.isHidden(base.appendingPathComponent("NoPlist.app").path) == false)
     }
 
     @Test("`.app` を落とした名前を表示する")

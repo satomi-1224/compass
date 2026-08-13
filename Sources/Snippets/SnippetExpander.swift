@@ -26,11 +26,10 @@ public enum SnippetExpander {
     /// - Parameter now: 展開に使う時刻。テストのために差し替えられる。
     public static func expand(_ text: String, now: Date = Date()) -> String {
         text.replacing(pattern) { match in
-            substitute(
-                String(match.name),
-                argument: match.argument.map(String.init),
-                now: now
-            )
+            // **空の引数は「無い」として扱う。** `{date:}` をそのまま渡すと
+            // 書式が空文字になり、書いたものが黙って消える。
+            let argument = match.argument.map(String.init).flatMap { $0.isEmpty ? nil : $0 }
+            return substitute(String(match.name), argument: argument, now: now)
                 // **知らないものはそのまま残す。** `{foo}` をリテラルとして
                 // 書きたいことがある。
                 ?? String(match.0)

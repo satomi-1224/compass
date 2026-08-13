@@ -69,6 +69,17 @@ struct SnippetExpanderTests {
         #expect(SnippetExpander.expand("a{bar:x}b", now: reference) == "a{bar:x}b")
     }
 
+    /// 空文字に展開すると、書いたものが黙って消える。
+    @Test("空の書式は既定として扱う")
+    func treatsEmptyArgumentAsAbsent() {
+        #expect(
+            SnippetExpander.expand("{date:}", now: reference)
+                == SnippetExpander.expand("{date}", now: reference))
+        #expect(
+            SnippetExpander.expand("{time:}", now: reference)
+                == SnippetExpander.expand("{time}", now: reference))
+    }
+
     @Test("プレースホルダが無ければそのまま返す")
     func passesThroughPlainText() {
         #expect(SnippetExpander.expand("@satomi1224_poke", now: reference) == "@satomi1224_poke")

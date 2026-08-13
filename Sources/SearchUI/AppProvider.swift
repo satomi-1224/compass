@@ -32,6 +32,7 @@ public final class AppProvider {
     private let roots: [String]
     private let log: Log
     private var cache: [Candidate] = []
+    private var hiddenCache: [String: Bool] = [:]
 
     public init(roots: [String] = AppProvider.defaultRoots, log: Log = .shared) {
         self.roots = roots
@@ -109,11 +110,11 @@ public final class AppProvider {
             let child = "\(path)/\(entry)"
 
             if entry.hasSuffix(".app") {
-                // Dock に出ないアプリは候補にしない。
-                if Self.isBackgroundApp(child) { continue }
                 // 実体で重複を判定し、開くのは見つけた経路のまま。
                 let target = URL(fileURLWithPath: child).resolvingSymlinksInPath().path
-                if found[target] == nil {
+                // **重複を先に弾く。** 同じ実体へのリンクが複数あると、
+                // 後の Info.plist 読み込みを何度も繰り返すことになる。
+                if found[target] == nil, !isHiddenCached(child) {
                     found[target] = Self.candidate(for: child)
                 }
                 // `.app` の中には入らない。内部のヘルパーアプリを拾わないため。
@@ -130,31 +131,62 @@ public final class AppProvider {
         }
     }
 
-    /// Dock に出ないアプリか（`LSUIElement` / `LSBackgroundOnly`）。
+    /// `LSUIElement` を理由に外すのはこの下だけ。
+    nonisolated static let systemCoreServices = "/System/Library/CoreServices/"
+
+    /// 候補から外すか。パスと 2 つのフラグだけで決める。
     ///
-    /// `/System/Library/CoreServices` にはユーザーが起動しないヘルパーが 100 以上
-    /// あり、そのままだと候補の半分以上を占める（実測で 231 件のうち 133 件）。
-    /// **ディレクトリごと外すと Finder まで落ちる**ため、Info.plist で判別する。
+    /// - `LSBackgroundOnly` は**UI を持たない。** 起動しても何も起きないので常に外す
+    /// - `LSUIElement` は**メニューバーだけのアプリ。** Docker や Hammerspoon が
+    ///   これに当たり、**ランチャーが最も役立つ相手なので落としてはいけない。**
+    ///   ただし `/System/Library/CoreServices` 直下にはユーザーが起動しない
+    ///   ヘルパーが 100 以上あって候補を埋めるので、そこに限って外す
     ///
-    /// `LSUIElement` は Bool でも文字列 `"1"` でも書けるので両方受ける。
-    nonisolated static func isBackgroundApp(_ path: String) -> Bool {
+    /// Finder は同じ `CoreServices` にあるが `LSUIElement` を持たないので残る。
+    nonisolated static func isHidden(
+        path: String, uiElement: Bool, backgroundOnly: Bool
+    ) -> Bool {
+        if backgroundOnly { return true }
+        guard uiElement else { return false }
+        return path.hasPrefix(systemCoreServices)
+    }
+
+    /// Info.plist を読んで判定する。
+    nonisolated static func isHidden(_ path: String) -> Bool {
         guard let data = FileManager.default.contents(atPath: "\(path)/Contents/Info.plist"),
             let info = (try? PropertyListSerialization.propertyList(from: data, format: nil))
                 as? [String: Any]
         else {
-            // 読めないものは普通のアプリとして扱う。落とすと拾えるものが減るだけ。
+            // 読めないものは普通のアプリとして扱う。外すと拾えるものが減るだけ。
             return false
         }
-        return isTrue(info["LSUIElement"]) || isTrue(info["LSBackgroundOnly"])
+        return isHidden(
+            path: path,
+            uiElement: isTrue(info["LSUIElement"]),
+            backgroundOnly: isTrue(info["LSBackgroundOnly"])
+        )
     }
 
+    /// plist の真偽値。**`YES` を忘れてはいけない。** 実際の CoreServices の
+    /// バンドルは `<string>YES</string>` で書いている（AddPrinter, PIPAgent）。
     private nonisolated static func isTrue(_ value: Any?) -> Bool {
         switch value {
         case let bool as Bool: bool
         case let number as NSNumber: number.boolValue
-        case let string as String: string == "1" || string.lowercased() == "true"
+        case let string as String: ["1", "true", "yes"].contains(string.lowercased())
         default: false
         }
+    }
+
+    /// `isHidden` の結果を覚える。
+    ///
+    /// 窓を開くたびに 200 以上の Info.plist を読み直すのは重い（読み込みと解析で
+    /// 実測 40ms）。ホットキーを押してから窓が出るまでの間に挟まる分なので効く。
+    private func isHiddenCached(_ path: String) -> Bool {
+        if let cached = hiddenCache[path] { return cached }
+        let result = Self.isHidden(path)
+        hiddenCache[path] = result
+        return result
     }
 
     /// アプリ 1 つを候補にする。

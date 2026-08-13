@@ -14,6 +14,9 @@ private final class KeyablePanel: NSPanel {
 /// なってメニューバーを奪い、閉じたあとのフォーカス復帰も一手間増える。
 /// nonactivating なら前面のアプリを保ったままキー入力を受けられるので、
 /// クリップボード履歴やスニペットのペースト先が変わらない。
+///
+/// 寸法は `Metrics` に集めてある。**入力欄の左にアイコンを置くのは装飾ではなく、
+/// 入力した文字と候補のタイトルの左端を揃えるため。**
 @MainActor
 final class SearchWindow: NSObject, NSTextFieldDelegate {
 
@@ -24,9 +27,6 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
     /// `Esc`、または他のアプリへ移ったので閉じるべき。
     var onCancel: (() -> Void)?
 
-    private static let inputHeight: CGFloat = 48
-    private static let cornerRadius: CGFloat = 12
-    private static let separatorThickness: CGFloat = 1
     /// 画面の上端からどれだけ下げるか。上寄り中央に出す（requirements.md 3.2）。
     private static let verticalInset: CGFloat = 0.18
     /// 画面の下端に残す余白。ぴったり接すると見づらい。
@@ -34,13 +34,14 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
 
     private let panel: KeyablePanel
     private let input = NSTextField()
+    private let symbolView = NSImageView()
     private let separator = NSBox()
     private let table = CandidateTable()
     private let container = NSVisualEffectView()
     private let maxVisibleRows: Int
 
     /// 高さは制約で決める。**隠すだけでは制約が残り、内容の高さと panel の高さが
-    /// 食い違って入力欄の上端が切れる**（実測で 48pt の窓に 49pt の内容が入った）。
+    /// 食い違って入力欄の上端が切れる。**
     private var separatorHeight: NSLayoutConstraint?
     private var tableHeight: NSLayoutConstraint?
     private var resignObserver: NSObjectProtocol?
@@ -48,7 +49,7 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
     init(width: CGFloat, maxVisibleRows: Int) {
         self.maxVisibleRows = max(1, maxVisibleRows)
         panel = KeyablePanel(
-            contentRect: NSRect(x: 0, y: 0, width: width, height: Self.inputHeight),
+            contentRect: NSRect(x: 0, y: 0, width: width, height: Metrics.inputHeight),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -71,9 +72,11 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
 
     // MARK: - 表示
 
-    func present(placeholder: String, candidates: [Candidate]) {
+    /// - Parameter symbolName: 入力欄の左に置く SF Symbol。今どのモードかを示す。
+    func present(placeholder: String, symbolName: String, candidates: [Candidate]) {
         input.stringValue = ""
         input.placeholderString = placeholder
+        symbolView.image = Self.symbol(named: symbolName)
         table.setCandidates(candidates)
         layout()
 
@@ -97,6 +100,13 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
         input.stringValue = text
     }
 
+    private static func symbol(named name: String) -> NSImage? {
+        let configuration = NSImage.SymbolConfiguration(
+            pointSize: Metrics.symbolPointSize, weight: .regular)
+        return NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+            .withSymbolConfiguration(configuration)
+    }
+
     // MARK: - 配置
 
     /// **常にメインディスプレイに出す。** マウス位置やフォーカスには追従しない
@@ -106,12 +116,11 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
         let area = NSScreen.screens.first?.visibleFrame
 
         // **画面から出ないように行数を抑える。** `max_results` は 50 まで許して
-        // いるので、そのまま使うと候補が画面の下へ突き抜けて選べない
-        // （20 行で 929pt、50 行で 2249pt になる）。
+        // いるので、そのまま使うと候補が画面の下へ突き抜けて選べない。
         let rows = min(table.count, maxVisibleRows, area.map(Self.rowsThatFit) ?? maxVisibleRows)
 
-        let listHeight = rows > 0 ? CGFloat(rows) * CandidateTable.rowHeight : 0
-        let separatorSpace = rows > 0 ? Self.separatorThickness : 0
+        let listHeight = rows > 0 ? CGFloat(rows) * Metrics.rowHeight : 0
+        let separatorSpace = rows > 0 ? Metrics.separatorThickness : 0
 
         separator.isHidden = rows == 0
         table.isHidden = rows == 0
@@ -119,7 +128,7 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
         tableHeight?.constant = listHeight
 
         // 制約で決まる内容の高さと同じ値を使う。ここがずれると入力欄が切れる。
-        let height = Self.inputHeight + separatorSpace + listHeight
+        let height = Metrics.inputHeight + separatorSpace + listHeight
 
         guard let area else {
             panel.setContentSize(NSSize(width: panel.frame.width, height: height))
@@ -139,8 +148,9 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
     /// 上端を固定したまま画面に収まる行数。テストから呼べるように internal。
     static func rowsThatFit(in area: NSRect) -> Int {
         let available =
-            area.height * (1 - verticalInset) - inputHeight - separatorThickness - bottomMargin
-        return max(1, Int(available / CandidateTable.rowHeight))
+            area.height * (1 - verticalInset) - Metrics.inputHeight
+            - Metrics.separatorThickness - bottomMargin
+        return max(1, Int(available / Metrics.rowHeight))
     }
 
     // MARK: - 組み立て
@@ -159,14 +169,22 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
         container.blendingMode = .behindWindow
         container.state = .active
         container.wantsLayer = true
-        container.layer?.cornerRadius = Self.cornerRadius
+        container.layer?.cornerRadius = Metrics.cornerRadius
         container.layer?.masksToBounds = true
         container.translatesAutoresizingMaskIntoConstraints = false
 
-        input.font = .systemFont(ofSize: 22, weight: .light)
+        // 入力に目を向けたいので、アイコンは控えめな色にする。
+        symbolView.contentTintColor = .secondaryLabelColor
+        symbolView.imageScaling = .scaleProportionallyDown
+        symbolView.translatesAutoresizingMaskIntoConstraints = false
+
+        // **light は使わない。** この大きさでは細すぎて輪郭がぼやける。
+        input.font = Metrics.inputFont
         input.isBordered = false
         input.drawsBackground = false
         input.focusRingType = .none
+        input.usesSingleLineMode = true
+        input.lineBreakMode = .byTruncatingTail
         input.delegate = self
         input.translatesAutoresizingMaskIntoConstraints = false
 
@@ -176,23 +194,33 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
         table.translatesAutoresizingMaskIntoConstraints = false
         table.onActivate = { [weak self] in self?.onSubmit?() }
 
+        container.addSubview(symbolView)
         container.addSubview(input)
         container.addSubview(separator)
         container.addSubview(table)
 
         // **初期値は候補が無いときの値（0）にする。** panel は `inputHeight` で
-        // 作られるので、1 のままだと `layout()` が走るまで「48pt の窓に 49pt の
-        // 内容」という食い違った制約になる。
+        // 作られるので、線の分を先に要求すると `layout()` が走るまで食い違う。
         let separatorHeight = separator.heightAnchor.constraint(equalToConstant: 0)
         let tableHeight = table.heightAnchor.constraint(equalToConstant: 0)
         self.separatorHeight = separatorHeight
         self.tableHeight = tableHeight
 
         NSLayoutConstraint.activate([
+            symbolView.leadingAnchor.constraint(
+                equalTo: container.leadingAnchor, constant: Metrics.horizontalPadding),
+            symbolView.widthAnchor.constraint(equalToConstant: Metrics.iconWidth),
+            symbolView.heightAnchor.constraint(equalToConstant: Metrics.iconWidth),
+            symbolView.centerYAnchor.constraint(equalTo: input.centerYAnchor),
+
             input.topAnchor.constraint(equalTo: container.topAnchor),
-            input.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
-            input.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
-            input.heightAnchor.constraint(equalToConstant: Self.inputHeight),
+            // **候補のタイトルと同じ位置から始める。** 目が最初に追うのは文字の
+            // 始まりなので、ここがずれると全体が雑に見える。
+            input.leadingAnchor.constraint(
+                equalTo: container.leadingAnchor, constant: Metrics.textInset),
+            input.trailingAnchor.constraint(
+                equalTo: container.trailingAnchor, constant: -Metrics.horizontalPadding),
+            input.heightAnchor.constraint(equalToConstant: Metrics.inputHeight),
 
             separator.topAnchor.constraint(equalTo: input.bottomAnchor),
             separator.leadingAnchor.constraint(equalTo: container.leadingAnchor),

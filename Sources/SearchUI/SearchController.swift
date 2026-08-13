@@ -13,7 +13,9 @@ public final class SearchController {
         /// 素の検索。入力に応じてアプリ・ファイル・Web を切り替える。
         case search
         /// あらかじめ用意した候補から選ぶ。
-        case list(placeholder: String, candidates: [Candidate])
+        ///
+        /// - Parameter symbolName: 入力欄の左に置く SF Symbol。今どのモードかを示す。
+        case list(placeholder: String, symbolName: String, candidates: [Candidate])
     }
 
     private let log: Log
@@ -73,10 +75,16 @@ public final class SearchController {
             listSource = []
             // Spotlight の live update が使えないので、開くたびに走査し直す。
             apps.refresh()
-            window.present(placeholder: "アプリ・ファイル・Web を検索", candidates: [])
-        case .list(let placeholder, let candidates):
+            // 動詞は省く。何が対象かだけ示せば足りる。
+            window.present(
+                placeholder: "アプリ・ファイル・Web",
+                symbolName: "magnifyingglass",
+                candidates: []
+            )
+        case .list(let placeholder, let symbolName, let candidates):
             listSource = candidates
-            window.present(placeholder: placeholder, candidates: candidates)
+            window.present(
+                placeholder: placeholder, symbolName: symbolName, candidates: candidates)
             log.debug("一覧を開いた: \(placeholder) \(candidates.count) 件")
         }
     }

@@ -94,7 +94,8 @@ final class CompassDelegate: NSObject, NSApplicationDelegate {
 
         if arguments.contains("--show-clipboard") {
             log.info("--show-clipboard: クリップボード履歴を出す")
-            toggleList(placeholder: "クリップボード履歴") { [weak self] in
+            toggleList(placeholder: "クリップボード履歴", symbolName: "list.clipboard") {
+                [weak self] in
                 self?.clipboard?.candidates() ?? []
             }
             return
@@ -102,7 +103,7 @@ final class CompassDelegate: NSObject, NSApplicationDelegate {
 
         if arguments.contains("--show-snippets") {
             log.info("--show-snippets: スニペット一覧を出す")
-            toggleList(placeholder: "スニペット") { [weak self] in
+            toggleList(placeholder: "スニペット", symbolName: "text.badge.plus") { [weak self] in
                 self?.snippets?.candidates() ?? []
             }
             return
@@ -147,11 +148,13 @@ final class CompassDelegate: NSObject, NSApplicationDelegate {
             case .search:
                 search?.toggle(.search)
             case .clipboard:
-                toggleList(placeholder: "クリップボード履歴") { [weak self] in
+                toggleList(placeholder: "クリップボード履歴", symbolName: "list.clipboard") {
+                    [weak self] in
                     self?.clipboard?.candidates() ?? []
                 }
             case .snippets:
-                toggleList(placeholder: "スニペット") { [weak self] in
+                toggleList(placeholder: "スニペット", symbolName: "text.badge.plus") {
+                    [weak self] in
                     self?.snippets?.candidates() ?? []
                 }
             }
@@ -162,12 +165,16 @@ final class CompassDelegate: NSObject, NSApplicationDelegate {
     ///
     /// 候補は**開くときだけ**作る。閉じるときに作っても捨てるだけで、
     /// クリップボード履歴のように件数が多いと無駄になる。
-    private func toggleList(placeholder: String, candidates: () -> [Candidate]) {
+    private func toggleList(
+        placeholder: String, symbolName: String, candidates: () -> [Candidate]
+    ) {
         guard let search else { return }
         if search.isVisible {
             search.dismiss()
         } else {
-            search.present(.list(placeholder: placeholder, candidates: candidates()))
+            search.present(
+                .list(
+                    placeholder: placeholder, symbolName: symbolName, candidates: candidates()))
         }
     }
 
@@ -240,10 +247,19 @@ if CommandLine.arguments.contains("--print-placeholders") {
 //
 // **窓もホットキーもアクセシビリティ権限も使わずに検索を検証できる。**
 // キーワード切替（`g swift`）も含めて、実際に窓へ出るのと同じ候補が出る。
-if let index = CommandLine.arguments.firstIndex(of: "--print-candidates"),
-    CommandLine.arguments.indices.contains(index + 1)
-{
-    let query = CommandLine.arguments[index + 1]
+if let index = CommandLine.arguments.firstIndex(of: "--print-candidates") {
+    // **クエリが無いときに黙って常駐へ落ちてはいけない。** ホットキーを登録し、
+    // 権限のダイアログまで出してしまう。
+    let next = index + 1
+    guard CommandLine.arguments.indices.contains(next),
+        !CommandLine.arguments[next].hasPrefix("--")
+    else {
+        FileHandle.standardError.write(
+            Data("使い方: compass --print-candidates <クエリ>\n".utf8))
+        exit(1)
+    }
+
+    let query = CommandLine.arguments[next]
     let store = ConfigStore()
     store.load()
 

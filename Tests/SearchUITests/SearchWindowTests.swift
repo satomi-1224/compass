@@ -123,10 +123,19 @@ struct SearchWindowTests {
     /// `max_results` は 50 まで許すので、そのままだと候補が画面外へ出て選べない。
     @Test("画面に収まる行数を返す")
     func rowsThatFitOnScreen() {
-        // 900pt の画面: 900 * 0.82 - 48 - 1 - 20 = 669 → 669 / 44 = 15 行
-        #expect(SearchWindow.rowsThatFit(in: NSRect(x: 0, y: 0, width: 1440, height: 900)) == 15)
+        // 900pt の画面: 900 * 0.82 - 56 - 1 - 20 = 661 → 661 / 48 = 13 行
+        #expect(SearchWindow.rowsThatFit(in: NSRect(x: 0, y: 0, width: 1440, height: 900)) == 13)
         // 大きい画面ではその分入る。
-        #expect(SearchWindow.rowsThatFit(in: NSRect(x: 0, y: 0, width: 3840, height: 2160)) > 15)
+        #expect(SearchWindow.rowsThatFit(in: NSRect(x: 0, y: 0, width: 3840, height: 2160)) > 13)
+    }
+
+    /// 入力した文字と候補のタイトルの左端が揃っていないと、全体が雑に見える。
+    @Test("入力欄と候補行のテキスト左端が同じ値から来る")
+    func textInsetIsShared() {
+        #expect(
+            Metrics.textInset
+                == Metrics.horizontalPadding + Metrics.iconWidth + Metrics.iconGap)
+        #expect(CandidateTable.rowHeight == Metrics.rowHeight)
     }
 
     /// 0 を返すと窓が作れない。極端に低い画面でも 1 行は残す。

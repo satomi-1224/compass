@@ -5,6 +5,10 @@ import Foundation
 /// `Cmd+V` の V。`kVK_ANSI_V` と同値。
 private let keyCodeV: CGKeyCode = 9
 
+/// クリップボード管理ツールに「履歴へ残すな」と伝える型
+/// （[nspasteboard.org](http://nspasteboard.org/) の慣例）。
+private let transientPasteboardType = "org.nspasteboard.TransientType"
+
 extension String {
     /// 末尾の改行だけを落とす。
     ///
@@ -89,9 +93,7 @@ public enum ActionRunner {
     /// 呼ぶ側は**検索窓を閉じてフォーカスが戻ってから**呼ぶこと。開いたまま送ると
     /// 自分の入力欄に貼られる。
     public static func paste(_ text: String, log: Log = .shared) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
+        copyForPaste(text)
 
         guard AXIsProcessTrusted() else {
             log.error(
@@ -158,6 +160,20 @@ public enum ActionRunner {
         }
         // コマンド出力は改行で終わるが、貼るときは要らない。
         return text.trimmingTrailingNewlines()
+    }
+
+    /// クリップボードへ載せる。**送出はしない**（テストから安全に呼べる）。
+    ///
+    /// **「履歴へ残すな」の印を付ける。** compass 自身が貼った内容がクリップボード
+    /// 履歴へ入ると、スニペットの `body_command` で取り出した秘密（パスワード
+    /// マネージャの読み出しなど）が平文でディスクに残る。貼る元（スニペット定義や
+    /// 履歴そのもの）は別に残っているので、履歴に入らなくても失うものはない。
+    static func copyForPaste(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(
+            "", forType: NSPasteboard.PasteboardType(transientPasteboardType))
+        pasteboard.setString(text, forType: .string)
     }
 
     /// `Cmd+V` を HID レベルで送出する。権限が無ければ黙って無視される。

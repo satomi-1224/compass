@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 
@@ -67,5 +68,29 @@ struct ActionRunnerTests {
     func returnsNilWhenShellFails() {
         // `sh -c` 自体は起動するので、出力が UTF-8 にならない場合を見る。
         #expect(ActionRunner.capture("printf '\\xff\\xfe'", log: quiet) == nil)
+    }
+
+    /// **compass が貼った内容をクリップボード履歴へ入れてはいけない。**
+    /// スニペットの `body_command` でパスワードマネージャから取り出した値が、
+    /// ユーザーがコピーしてもいないのに平文でディスクへ残ってしまう。
+    ///
+    /// `paste` ではなく `copyForPaste` を試す。`paste` は権限があると `Cmd+V` を
+    /// 送出するので、テスト中に前面のアプリへ貼られてしまう。
+    @MainActor
+    @Test("貼る内容には履歴に残さない印を付ける")
+    func marksPasteAsTransient() {
+        let pasteboard = NSPasteboard.general
+        // テストがユーザーのクリップボードを潰さないよう戻す。
+        let saved = pasteboard.string(forType: .string)
+        defer {
+            pasteboard.clearContents()
+            if let saved { pasteboard.setString(saved, forType: .string) }
+        }
+
+        ActionRunner.copyForPaste("secret")
+
+        let types = pasteboard.types?.map(\.rawValue) ?? []
+        #expect(types.contains("org.nspasteboard.TransientType"))
+        #expect(pasteboard.string(forType: .string) == "secret")
     }
 }
