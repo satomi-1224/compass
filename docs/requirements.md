@@ -211,7 +211,7 @@ body  = "{date:yyyy-MM-dd}"
 
 [[snippets]]
 title = "TwitterID"
-body  = "@satomi1224_poke"
+body  = "@example"
 
 [[snippets]]
 title = "branch"
@@ -303,25 +303,22 @@ cdhash と inode が入れ替わっても `AXIsProcessTrusted()` が true のま
 
 **アプリ名は英名（ファイル名）だけで検索する。** ローカライズ名は候補に入れていない。`FuzzyMatcher` が見る文字列を 1 つに保つためで、「システム設定」を `System Settings` で引けるが逆はできない。日本語・かなマッチングは未対応のまま残す。
 
-### 7.3 現行設定からの移植対象
+### 7.3 Hammerspoon の設定を移すときの注意
 
-`command_launcher_local.lua` の `⌘⌥⇧+Return`（MagicBoard のトグル）は、シェルで表現できるため `[commands]` の 1 行として移植できる。
+Lua で書いていた処理のうち、**シェルで表現できるものは `[commands]` の 1 行になる**。
+たとえばプロセスのトグルは次のように書ける。
 
 ```toml
 [commands]
-return = "pgrep -f MagicBoard && pkill -f MagicBoard || ~/ghq/github.com/satomi-1224/dotfiles-global/magicboard/MagicBoard &"
+return = "pgrep -f MagicBoard && pkill -f MagicBoard || ~/bin/MagicBoard &"
 ```
 
-`⌘⌥⇧+K` の Remap は `~/Applications/Chrome Apps.localized/Remap.app` を開いている（4 章の設定例は `~/Applications/Remap.app` と略記しているが、実体はこちら）。
+外部コマンドは `/bin/sh -c` を通すので、`~` と `$HOME` の展開、`&&`、末尾の `&` が
+そのまま使える。
 
-> **現行設定が壊れている箇所が 2 つある**（どちらも今は何も起動しない）。
->
-> 1. `command_launcher_local.lua` の `~/Work/dotfiles/magicboard/MagicBoard` は存在しない。実体は `~/ghq/github.com/satomi-1224/dotfiles-global/magicboard/MagicBoard` へ移っている
-> 2. `command_launcher.lua` の `⌘⌥⇧+Space` が開く `~/Applications/Chrome Apps.localized/Claude.app` も存在しない（同ディレクトリには `Remap.app` だけ）
->
-> 2 は 1 章の「`⌘⌥⇧+Space` は Claude の起動に使われているので別のキーへ移す必要がある」という前提を崩す。**移す対象が無いため、検索窓へ明け渡すだけで済む。** 突き合わせの詳細は [migration.md](./migration.md)。
-
-`~` や `$HOME` を展開するかは外部コマンドの実行方法（`sh -c` を通すか）に依存する。Phase 2 で確定する。
+> 移す前に**現行設定が実際に動いているかを確かめること。** 移行時に、Lua 側が存在
+> しないパスを指したまま放置されていた箇所が 2 つ見つかった（どちらも既に何も
+> 起動していなかった）。そのまま持ち込むと「compass にしたら壊れた」と誤解する。
 
 ### 7.4 実装上の制約（Phase 0 で判明）
 

@@ -116,7 +116,7 @@ in
       example = lib.literalExpression ''
         [
           { title = "now"; body = "{date:yyyy-MM-dd}"; }
-          { title = "TwitterID"; body = "@satomi1224_poke"; }
+          { title = "TwitterID"; body = "@example"; }
           { title = "branch"; body_command = "git branch --show-current"; }
         ]
       '';

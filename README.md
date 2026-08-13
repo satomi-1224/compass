@@ -1,40 +1,294 @@
-# compass
+<p align="center">
+  <img src="docs/icon.png" width="128" alt="compass">
+</p>
 
-macOS ネイティブのアプリランチャー。Hammerspoon で運用しているランチャー環境を置き換える。
+<h1 align="center">compass</h1>
 
-2 つの入口を持つ。
+<p align="center">
+  <b>macOS 向けのアプリランチャー</b>
+</p>
 
-1. **検索窓** — `⌘⌥⇧+Space` で開き、アプリ・ファイル・Web を検索して実行する
-2. **直接ホットキー** — `⌘⌥⇧+{任意キー}` で検索窓を経由せずコマンドを一発実行する
+<p align="center">
+  <img src="https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey" alt="platform">
+  <img src="https://img.shields.io/badge/Swift-6-orange" alt="swift">
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="license">
+</p>
 
-## ステータス
+アプリ・ファイル・Web を 1 つの検索窓から開き、よく使うコマンドは窓を経由せず一発で
+実行します。クリップボード履歴とスニペットも同じ窓から選べます。**メニューバーにも
+Dock にも出ない常駐プロセス**で、設定は TOML 3 枚です。
 
-**Phase 1〜5 の実装が完了。** 実機での操作確認と Hammerspoon からの移行が残っている。
+```
+┌────────────────────────────────────────────┐
+│ 🔍  chr                                    │
+├────────────────────────────────────────────┤
+│ 🌐  Google Chrome      /Applications        │
+│ 🌐  Chromium           /Applications        │
+└────────────────────────────────────────────┘
+   ⌘⌥⇧Space で検索、⌘⌥⇧V で履歴、⌘⌥⇧W でスニペット
+```
 
-| Phase | 内容 | 状態 |
+## 特長
+
+- **入口は 2 つだけ** — 検索窓（`⌘⌥⇧Space`）と、窓を経由しない直接ホットキー
+- **キーワードで切り替わる** — `g swift` で Google、`f report` でファイル検索
+- **並び順が変わらない** — fuzzy マッチのみで**使用頻度は学習しない。** 同じ入力には
+  常に同じ結果が返る
+- **クリップボード履歴** — テキスト 50 件。パスワードマネージャが「保存するな」と
+  印を付けた内容は残さない
+- **スニペット** — 静的テキスト、`{date:yyyy-MM-dd}` などのプレースホルダ、
+  外部コマンドの出力
+- **設定は TOML 3 枚** — 保存すると自動で読み直す。**不備があっても直前の正常な設定で
+  動き続ける**
+- **トリガーは 1 種類だけ** — `hotkeys.toml` の 1 行を直せば全キーに効く
+
+## 動作要件
+
+- macOS 14 以降
+- Swift 6 ツールチェイン（Xcode は不要。Command Line Tools だけで組める）
+- アクセシビリティ権限（クリップボード履歴とスニペットのペーストに必要）
+
+## インストール
+
+```bash
+git clone https://github.com/satomi-1224/compass.git
+cd compass
+
+# 1. 署名 ID を作る（一度だけ。省略すると入れ替えのたびに権限を求められる）
+./scripts/make-signing-cert.sh
+
+# 2. .app を組み立てて ~/Applications へ入れる
+./scripts/install-app.sh release
+```
+
+初回起動時に**アクセシビリティ権限**を求められます。「システム設定 > プライバシーと
+セキュリティ > アクセシビリティ」で許可してください。
+
+> [!IMPORTANT]
+> **アクセシビリティ権限はコード署名の同一性に紐づきます。** ad-hoc 署名のままだと
+> 内容が変わるたびにハッシュが変わり、入れ替えるたびに許可を求められます。
+> `make-signing-cert.sh` で固定の署名 ID を作っておくと出なくなります。Apple Developer
+> アカウントは要りません（[検証の記録](experiments/phase0-permission/README.md)）。
+
+### Nix（home-manager）で使う
+
+設定と自動起動を宣言的に持てます。flake を input に足して、home-manager の
+モジュールを読み込みます。
+
+```nix
+{
+  inputs.compass.url = "github:satomi-1224/compass";
+
+  # home-manager の設定
+  imports = [ inputs.compass.homeManagerModules.default ];
+
+  programs.compass = {
+    enable = true;
+
+    hotkeys = {
+      trigger = "cmd+alt+shift";
+      actions = { space = "search"; v = "clipboard"; w = "snippets"; };
+      commands = {
+        t = "open -a WezTerm";
+        f = "open -a Finder";
+        b = "open -a 'Google Chrome'";
+      };
+    };
+
+    snippets = [
+      { title = "now"; body = "{date}"; }
+      { title = "branch"; body_command = "git branch --show-current"; }
+    ];
+  };
+}
+```
+
+| オプション | 既定 | 内容 |
 |---|---|---|
-| 0 | 権限検証 | 完了（実機確認済み） |
-| 1 | プロジェクト基盤・設定ロード | 完了（launchd の登録は未確認） |
-| 2 | HotkeyEngine | 完了 |
-| 3 | SearchUI | 完了（見た目と操作は未確認） |
-| 4 | ClipboardHistory | 完了（ペーストは未確認） |
-| 5 | Snippets | 完了（ペーストは未確認） |
-| 6 | 移行 | 突き合わせ済み。並行運用が残る |
+| `enable` | `false` | 有効にする |
+| `settings` | `{}` | `config.toml` の内容 |
+| `hotkeys` | `{}` | `hotkeys.toml` の内容 |
+| `snippets` | `[]` | `snippets.toml` の `[[snippets]]` |
+| `settingsFile` / `hotkeysFile` / `snippetsFile` | `null` | 書いてある TOML をそのまま置く。属性集合より優先 |
+| `app` | `~/Applications/compass.app` | 本体の場所 |
+| `startService` | `true` | launchd agent として登録し、ログイン時に起動する |
+| `logFile` | `~/Library/Logs/compass.log` | launchd から起動したときのログ |
+| `logLevel` | `"info"` | `debug` / `info` / `warn` / `error` / `off` |
 
-配布方式は Phase 0 で確定した。**自己署名の固定証明書で署名し `~/Applications/compass.app` へコピー配置する。** nix store に本体は置かず、flake は設定・自動起動・ログの置き場所だけを受け持つ。
+> [!IMPORTANT]
+> **本体は Nix ストアに置きません。** 理由は 2 つあります。
+> 1. compass は Swift 6 を要求しますが、nixpkgs の Swift は 5.10 でストアの中では組めません
+> 2. アクセシビリティ権限はアプリの同一性に紐づくため、更新のたびにパスが変わる
+>    ストアへ置くと権限が毎回外れます
+>
+> 本体は `./scripts/install-app.sh` が `~/Applications/compass.app` へ入れます。
+> モジュールが受け持つのは**設定・自動起動・ログの置き場所**です。
 
-アクセシビリティ権限は署名の同一性に紐づくため、ad-hoc 署名だとリビルドのたびに外れる。固定証明書なら cdhash が変わっても保持されることを実機で確認した（[検証の詳細](./experiments/phase0-permission/README.md)）。Apple Developer アカウントは不要。
+## 使い方
 
-## ドキュメント
+トリガーは `hotkeys.toml` に 1 箇所だけ書き、各キーは単キーで指定します。
+既定は `⌘⌥⇧`。
 
-| | |
+| キー | 動作 |
 |---|---|
-| [docs/requirements.md](./docs/requirements.md) | 要件定義。機能・設定仕様・技術選択の根拠・リスク |
-| [docs/tasks.md](./docs/tasks.md) | 実装タスク。フェーズ別の進捗管理 |
-| [docs/migration.md](./docs/migration.md) | Hammerspoon との突き合わせと移行手順 |
-| [experiments/phase0-permission/](./experiments/phase0-permission/) | Phase 0 の検証アプリと結果 |
+| `<trigger>+Space` | 検索窓 |
+| `<trigger>+V` | クリップボード履歴 |
+| `<trigger>+W` | スニペット一覧 |
+| `<trigger>+{任意}` | 外部コマンドを一発で実行 |
 
-## 構成
+窓の中では `↑↓` で選び、`Enter` で実行、`Esc` で閉じます。他のアプリへ移っても閉じます。
+**修飾キーによる副アクションはありません**（`Enter` だけ）。
+
+### 検索窓
+
+素の入力はアプリ検索、先頭のキーワードでモードが変わります。
+
+```
+chr        → アプリ:   Google Chrome / Chromium
+g swift    → Web:      Google で "swift" を検索
+f report   → ファイル: ~/Documents/report.md
+```
+
+キーワードだけを打った時点では切り替わりません（空白が続いて初めて切り替わる）。
+`g` で始まるアプリを探せるようにするためです。
+
+> [!NOTE]
+> **ファイル検索は Spotlight のインデックスを使います。** `mdutil -s /` が
+> `Indexing disabled.` を返す環境では常に 0 件になるので、`sudo mdutil -i on /` で
+> 有効にするか、`config.toml` からファイル検索のキーワードを外してください。
+> アプリの列挙は自前で走査するので、インデックスが無くても動きます。
+
+## 設定
+
+`~/.config/compass/` に役割別の 3 ファイルを置きます。**保存すると自動で読み直します**
+（`darwin-rebuild switch` によるシンボリックリンクの張り替えも検知します）。
+
+```
+config.toml     アプリ本体の設定
+hotkeys.toml    ショートカット登録
+snippets.toml   スニペット登録
+```
+
+**設定の誤りで常駐は止まりません。** 不備があると通知センターに出て、**直前の正常な
+設定のまま動き続けます**。範囲外の値は丸めずにエラーにします（丸めると「設定したのに
+効いていない」状態に気づけないため）。
+
+### config.toml
+
+```toml
+[appearance]
+width       = 680
+max_results = 9
+
+[clipboard]
+enabled       = true
+max_items     = 50
+poll_interval = 0.8
+
+[search.files]
+scopes      = ["~"]
+max_results = 20
+
+[[search.keywords]]
+prefix = "g"
+kind   = "web"
+url    = "https://www.google.com/search?q={query}"
+```
+
+`search.keywords` は**置き換え**です（既定へ追加されるのではありません）。書かなければ
+`f` = ファイル、`g` = Google、`gh` = GitHub が使われます。
+
+### hotkeys.toml
+
+```toml
+trigger = "cmd+alt+shift"
+
+[actions]
+space = "search"
+v     = "clipboard"
+w     = "snippets"
+
+[commands]
+t = "open -a WezTerm"
+f = "open -a Finder"
+```
+
+`[actions]` に書けるのは `search` / `clipboard` / `snippets` の 3 つだけです。それ以外は
+`[commands]` に外部コマンドとして書きます（`/bin/sh -c` を通すので `~` や `&&` が使えます）。
+
+**同じキーが両方にあると設定エラーになります。** `return` と `enter` のように綴りが
+違っても同じ物理キーなら衝突として扱います。書けるキー名は `compass --print-keys` で
+出ます。
+
+### snippets.toml
+
+```toml
+[[snippets]]
+title = "now"
+body  = "{date:yyyy-MM-dd}"
+
+[[snippets]]
+title = "branch"
+body_command = "git branch --show-current"
+```
+
+`body`（静的テキスト）か `body_command`（外部コマンドの出力）の**どちらか一方**を書きます。
+`body_command` は**一覧を開いた時点では実行しません**（選んでいないコマンドが走らない
+ように）。
+
+書けるプレースホルダは `compass --print-placeholders` で出ます。
+
+| 記法 | 展開 |
+|---|---|
+| `{date}` | `yyyy-MM-dd` |
+| `{date:<書式>}` | 指定した書式（例 `{date:yyyy年M月d日}`） |
+| `{time}` / `{time:<書式>}` | `HH:mm` |
+| `{datetime}` | `yyyy-MM-dd HH:mm:ss` |
+| `{uuid}` | 小文字の UUID |
+
+知らないプレースホルダはそのまま残るので、`{foo}` はリテラルとして書けます。
+
+## 動作を確かめる
+
+メニューバーにも Dock にも出ないので、動いているかは次で確かめます。
+
+```bash
+launchctl print gui/$(id -u)/org.nix-community.home.compass
+tail -f ~/Library/Logs/compass.log
+```
+
+ホットキーを押さずに窓を出したり、検索結果を確かめたりできます。
+
+```
+--show-search [クエリ]       検索窓を出す
+--show-clipboard             クリップボード履歴を出す
+--show-snippets              スニペット一覧を出す
+--print-candidates <クエリ>  検索結果を出して終わる
+--print-apps                 列挙したアプリを出して終わる
+--print-keys                 hotkeys.toml に書けるキー名
+--print-placeholders         snippets.toml に書けるプレースホルダ
+```
+
+```bash
+$ compass --print-candidates "g swift"
+swift	https://www.google.com/search?q=swift
+```
+
+`COMPASS_LOG_LEVEL=debug` でログの粒度を上げられます。
+
+## 開発
+
+```bash
+swift build          # ビルド
+./scripts/test.sh    # テスト
+./scripts/build-app.sh debug   # .app を組み立てる（署名まで）
+./scripts/make-icon.sh <元画像> # アイコンを作り直す
+```
+
+Xcode は要りません。`scripts/env.sh` が `Testing.framework` の探索パスを補います
+（Command Line Tools だけの環境では SPM が自力で見つけられないため）。
+
+### 構成
 
 ```
 CompassCore       設定ロード / Action 実行 / 候補の型 / fuzzy マッチ  ← UI を知らない
@@ -44,67 +298,12 @@ ClipboardHistory  ポーリング監視と永続化
 Snippets          プレースホルダの展開
 ```
 
-`HotkeyEngine` が `SearchUI` を知らないことをモジュール境界で担保している。将来プロセスを分けたくなったときの退路として残してある。
+`HotkeyEngine` が `SearchUI` を知らないことをモジュール境界で担保しています。将来
+プロセスを分けたくなったときの退路として残してあります。
 
-## 設定
+設計の根拠と、実装中に判明して方針を変えた点は
+[docs/requirements.md](docs/requirements.md) にあります。
 
-`~/.config/compass/` に役割別の 3 ファイルを置く。Nix / home-manager から配布する。
+## ライセンス
 
-```
-config.toml     アプリ本体の設定
-hotkeys.toml    ショートカット登録
-snippets.toml   スニペット登録
-```
-
-**設定に不備があると通知センターに出て、直前の正常な設定のまま動き続ける。** 保存すると自動で読み直す（`darwin-rebuild switch` でのシンボリックリンク張り替えも検知する）。
-
-仕様は [requirements.md の 4 章](./docs/requirements.md#4-設定ファイル) を参照。
-
-## ビルド
-
-```bash
-# 署名 ID を作る（一度だけ。省略すると入れ替えのたびに権限を求められる）
-./scripts/make-signing-cert.sh
-
-# ~/Applications/compass.app へ入れる
-./scripts/install-app.sh release
-
-# テスト
-./scripts/test.sh
-```
-
-初回の `codesign` で出るキーチェーンのダイアログは**「常に許可」**を選ぶ。「許可」だとビルドのたびに聞かれる。
-
-Xcode は要らない（Command Line Tools だけで組める）。`scripts/env.sh` が `Testing.framework` の探索パスを補う。
-
-## 動作を確かめる
-
-ホットキーを押さずに窓を出せる。常用のキーが他のアプリと衝突していても確認できる。
-
-```
---show-search [クエリ]      検索窓を出す
---show-clipboard            クリップボード履歴を出す
---show-snippets             スニペット一覧を出す
---print-candidates <クエリ>  検索結果を出して終わる
---print-apps                列挙したアプリを出して終わる
---print-keys                hotkeys.toml に書けるキー名
---print-placeholders        snippets.toml に書けるプレースホルダ
-```
-
-`--print-candidates` は**窓もホットキーも権限も使わない**ので、検索の挙動を確かめるのに向く。
-
-```bash
-$ compass --print-candidates chr
-Google Chrome	/Applications/Google Chrome.app
-
-$ compass --print-candidates "g swift"
-swift	https://www.google.com/search?q=swift
-```
-
-`COMPASS_LOG_LEVEL=debug` でログの粒度を上げられる。launchd から起動したときのログは `~/Library/Logs/compass.log`。
-
-メニューバーにも Dock にも出ないので、動いているかは次で確かめる。
-
-```bash
-launchctl print gui/$(id -u)/org.nix-community.home.compass
-```
+MIT

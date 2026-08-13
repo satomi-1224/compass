@@ -4,8 +4,8 @@
 アクセシビリティ権限が必須。**リビルドして入れ替えたあとも権限が保持されるか**を
 実機で確かめる。ここが破綻すると配布方式かビルド方式の再検討が必要になる。
 
-要件は [../../docs/requirements.md](../../docs/requirements.md) の 7.1、
-タスクは [../../docs/tasks.md](../../docs/tasks.md) の Phase 0 を参照。
+この検証で配布方式が決まった。結論は
+[../../docs/requirements.md](../../docs/requirements.md) の 7.1 にある。
 
 ## 検証アプリの仕組み
 

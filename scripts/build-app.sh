@@ -30,6 +30,15 @@ mkdir -p "$APP/Contents/MacOS"
 cp "$REPO_ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 cp "$BIN_PATH" "$APP/Contents/MacOS/compass"
 
+# アイコン。無ければ既定の白いアイコンになるだけなので致命的ではない。
+# 作り直しは ./scripts/make-icon.sh
+if [ -f "$REPO_ROOT/Resources/AppIcon.icns" ]; then
+  mkdir -p "$APP/Contents/Resources"
+  cp "$REPO_ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+else
+  echo "    アイコンが無い（./scripts/make-icon.sh <元画像> で作れる）"
+fi
+
 echo "==> 署名"
 # **`-v` を付けない。** `-v` は「コード署名ポリシーで有効」なものだけを出すため、
 # 信頼設定をしていない自己署名証明書が除外される。見落とすと黙って ad-hoc へ

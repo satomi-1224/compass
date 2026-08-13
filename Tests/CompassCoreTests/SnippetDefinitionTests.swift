@@ -15,7 +15,7 @@ struct SnippetDefinitionTests {
 
             [[snippets]]
             title = "TwitterID"
-            body  = "@satomi1224_poke"
+            body  = "@example"
 
             [[snippets]]
             title = "branch"
@@ -26,7 +26,7 @@ struct SnippetDefinitionTests {
 
         #expect(snippets.count == 3)
         #expect(snippets[0] == SnippetDefinition(title: "now", body: .text("{date:yyyy-MM-dd}")))
-        #expect(snippets[1].body == .text("@satomi1224_poke"))
+        #expect(snippets[1].body == .text("@example"))
         #expect(snippets[2].body == .command("git branch --show-current"))
     }
 
@@ -40,7 +40,7 @@ struct SnippetDefinitionTests {
             title = "now"
 
             [[snippets]]
-            body = "@satomi1224_poke"
+            body = "@example"
             title = "TwitterID"
 
             [[snippets]]

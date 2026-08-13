@@ -37,7 +37,7 @@ struct ConfigStoreTests {
 
     // MARK: - 読み込み
 
-    /// ファイル欠損はエラーにしない（tasks.md Phase 1）。
+    /// ファイル欠損はエラーにしない（requirements.md 5.4）。
     @Test("ファイルが無ければ既定値になり、通知も出さない")
     func missingFilesAreNotErrors() throws {
         let directory = try makeDirectory()
@@ -74,7 +74,7 @@ struct ConfigStoreTests {
         #expect(store.snippets.map(\.title) == ["now"])
     }
 
-    /// **Phase 1 の完了条件。** 設定を壊してもランチャーが死んではいけない。
+    /// **設定を壊してもランチャーが死んではいけない**（requirements.md 5.4）。
     @Test("壊れた設定は直前の内容を保ったまま通知する")
     func keepsLastGoodConfiguration() throws {
         let directory = try makeDirectory()

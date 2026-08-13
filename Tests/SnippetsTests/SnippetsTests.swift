@@ -82,7 +82,7 @@ struct SnippetExpanderTests {
 
     @Test("プレースホルダが無ければそのまま返す")
     func passesThroughPlainText() {
-        #expect(SnippetExpander.expand("@satomi1224_poke", now: reference) == "@satomi1224_poke")
+        #expect(SnippetExpander.expand("@example", now: reference) == "@example")
         #expect(SnippetExpander.expand("", now: reference) == "")
     }
 
