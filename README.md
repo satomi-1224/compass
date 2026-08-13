@@ -82,12 +82,23 @@ Xcode は要らない（Command Line Tools だけで組める）。`scripts/env.
 ホットキーを押さずに窓を出せる。常用のキーが他のアプリと衝突していても確認できる。
 
 ```
---show-search [クエリ]   検索窓を出す
---show-clipboard         クリップボード履歴を出す
---show-snippets          スニペット一覧を出す
---print-apps             列挙したアプリを出して終わる
---print-keys             hotkeys.toml に書けるキー名
---print-placeholders     snippets.toml に書けるプレースホルダ
+--show-search [クエリ]      検索窓を出す
+--show-clipboard            クリップボード履歴を出す
+--show-snippets             スニペット一覧を出す
+--print-candidates <クエリ>  検索結果を出して終わる
+--print-apps                列挙したアプリを出して終わる
+--print-keys                hotkeys.toml に書けるキー名
+--print-placeholders        snippets.toml に書けるプレースホルダ
+```
+
+`--print-candidates` は**窓もホットキーも権限も使わない**ので、検索の挙動を確かめるのに向く。
+
+```bash
+$ compass --print-candidates chr
+Google Chrome	/Applications/Google Chrome.app
+
+$ compass --print-candidates "g swift"
+swift	https://www.google.com/search?q=swift
 ```
 
 `COMPASS_LOG_LEVEL=debug` でログの粒度を上げられる。launchd から起動したときのログは `~/Library/Logs/compass.log`。

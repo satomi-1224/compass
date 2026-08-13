@@ -118,8 +118,10 @@ public enum ActionRunner {
     }
 
     /// コマンドの標準出力を読む。呼び出し元のスレッドをブロックする。
-    private static func capture(
-        _ command: String, timeout: TimeInterval, log: Log
+    ///
+    /// テストから直接呼べるように internal にしてある。
+    static func capture(
+        _ command: String, timeout: TimeInterval = 5, log: Log = .shared
     ) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
