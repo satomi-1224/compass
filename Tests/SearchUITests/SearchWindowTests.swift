@@ -10,7 +10,9 @@ struct SearchWindowTests {
 
     private func candidates(_ count: Int) -> [Candidate] {
         (1...count).map {
-            Candidate(id: "\($0)", title: "App \($0)", action: .open(path: "/\($0)"))
+            Candidate(
+                id: "\($0)", title: "App \($0)", icon: .file(path: "/\($0)"),
+                action: .open(path: "/\($0)"))
         }
     }
 

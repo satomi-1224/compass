@@ -28,6 +28,12 @@ public final class SearchController {
     private var presentation: Presentation = .search
     /// 一覧モードで絞り込む元の候補。
     private var listSource: [Candidate] = []
+    /// 窓を開く前に前面だったアプリ。**閉じたときにここへ戻す。**
+    ///
+    /// `.nonactivatingPanel` でも `makeKeyAndOrderFront` でパネルがキーウィンドウに
+    /// なる。`orderOut` しただけでは元のアプリへ確実に戻らず、送った `Cmd+V` が
+    /// compass 自身に届いて消えることがある（貼り先が無いため何も起きない）。
+    private var previousApplication: NSRunningApplication?
 
     public init(config: @escaping @MainActor () -> Config, log: Log = .shared) {
         self.config = config
@@ -59,9 +65,12 @@ public final class SearchController {
 
     /// 窓は開くたびに作り直す。設定（幅・表示件数）の変更が自然に反映される。
     public func present(_ presentation: Presentation) {
+        // 貼り先を覚えておく。窓を出す前に取らないと自分自身になる。
+        previousApplication = NSWorkspace.shared.frontmostApplication
+
         let appearance = config().appearance
         let window = SearchWindow(
-            width: appearance.width, maxVisibleRows: appearance.maxResults)
+            width: appearance.width, maxVisibleRows: appearance.maxResults, log: log)
 
         window.onQueryChange = { [weak self] text in self?.updateCandidates(for: text) }
         window.onSubmit = { [weak self] in self?.submit() }
@@ -94,6 +103,19 @@ public final class SearchController {
         window?.dismiss()
         window = nil
         listSource = []
+        restorePreviousApplication()
+    }
+
+    /// 開く前に前面だったアプリへ戻す。
+    ///
+    /// **これをしないとペーストが飛ばない。** パネルがキー入力を握っていた状態から
+    /// 閉じただけでは、キーウィンドウが元のアプリへ戻るとは限らない。
+    private func restorePreviousApplication() {
+        guard let previous = previousApplication else { return }
+        previousApplication = nil
+        // 自分自身なら戻す相手がいない。
+        guard previous.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
+        previous.activate()
     }
 
     /// 入力を流し込んで候補を更新する。ホットキーを押さずに挙動を確かめるための
@@ -169,6 +191,7 @@ public final class SearchController {
                     id: "web:\(keyword.prefix)",
                     title: parsed.query,
                     subtitle: url.absoluteString,
+                    icon: .symbol("globe"),
                     action: .openURL(url)
                 )
             ])
@@ -178,15 +201,20 @@ public final class SearchController {
     // MARK: - 実行
 
     /// 窓を閉じてフォーカスが元のアプリへ戻るまでの待ち時間。
-    private static let focusReturnDelay: TimeInterval = 0.1
+    ///
+    /// `activate()` は非同期に効くので、少し余裕を持たせる。短すぎると
+    /// 切り替わる前に `Cmd+V` が飛んで取りこぼす。
+    private static let focusReturnDelay: TimeInterval = 0.15
 
     private func submit() {
         guard let candidate = window?.selected else { return }
+        log.debug("実行: \(candidate.title)")
         dismiss()
 
         let log = self.log
         switch candidate.action {
         case .paste(let text):
+            log.debug("貼り付け: \(TextSummary.line(of: text, limit: 40))")
             pasteAfterFocusReturns { ActionRunner.paste(text, log: log) }
 
         case .pasteCommandOutput(let command):

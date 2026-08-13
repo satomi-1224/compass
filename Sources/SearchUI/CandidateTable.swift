@@ -157,6 +157,8 @@ private final class CandidateRowView: NSTableCellView {
     private let iconView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
+    /// アプリのアイコンは色を変えない。シンボルだけ選択に合わせて塗り替える。
+    private var usesSymbol = false
 
     init() {
         super.init(frame: .zero)
@@ -210,16 +212,19 @@ private final class CandidateRowView: NSTableCellView {
         subtitleLabel.stringValue = candidate.subtitle ?? ""
         subtitleLabel.isHidden = candidate.subtitle == nil
 
-        if let path = candidate.iconPath {
+        switch candidate.icon {
+        case .file(let path):
             iconView.image = NSWorkspace.shared.icon(forFile: path)
-            iconView.isHidden = false
-        } else {
-            iconView.image = nil
-            iconView.isHidden = true
+            iconView.contentTintColor = nil
+            usesSymbol = false
+        case .symbol(let name):
+            iconView.image = Metrics.symbol(named: name)
+            iconView.contentTintColor = .secondaryLabelColor
+            usesSymbol = true
         }
     }
 
-    /// 選択されると背景が濃くなる。文字色を合わせないと読めない。
+    /// 選択されると背景が濃くなる。文字色とシンボルの色を合わせないと読めない。
     override var backgroundStyle: NSView.BackgroundStyle {
         didSet {
             let emphasized = backgroundStyle == .emphasized
@@ -228,6 +233,10 @@ private final class CandidateRowView: NSTableCellView {
                 emphasized
                 ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.8)
                 : .secondaryLabelColor
+            if usesSymbol {
+                iconView.contentTintColor =
+                    emphasized ? .alternateSelectedControlTextColor : .secondaryLabelColor
+            }
         }
     }
 }

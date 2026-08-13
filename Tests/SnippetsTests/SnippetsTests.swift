@@ -144,6 +144,22 @@ struct SnippetLibraryTests {
         #expect(SnippetLibrary(definitions: { [] }).candidates().isEmpty)
     }
 
+    /// アイコンを持たない候補が混ざると、その行だけ文字の左に空白が空く。
+    /// 外部コマンドを走らせるものは見た目で区別できるようにする。
+    @Test("候補は必ずアイコンを持ち、種類で描き分ける")
+    func candidatesAlwaysHaveIcon() {
+        let library = SnippetLibrary(definitions: {
+            [
+                SnippetDefinition(title: "text", body: .text("a")),
+                SnippetDefinition(title: "command", body: .command("echo a")),
+            ]
+        })
+
+        let candidates = library.candidates(now: reference)
+        #expect(candidates[0].icon == .symbol("text.quote"))
+        #expect(candidates[1].icon == .symbol("terminal"))
+    }
+
     @Test("設定の順序を保つ")
     func keepsDefinitionOrder() {
         let library = SnippetLibrary(definitions: {

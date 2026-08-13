@@ -9,23 +9,34 @@ public struct Candidate: Equatable, Sendable, Identifiable {
     public var id: String
     public var title: String
     public var subtitle: String?
-    /// アイコンを取りに行くパス。アプリとファイルのときだけ入る。
-    public var iconPath: String?
+    /// 左に出す絵。**すべての候補が持つ。**
+    ///
+    /// 持たない候補があると、その行だけ文字の左に空白が空く。一覧の中で
+    /// 揃っていない行が混ざると崩れて見える。
+    public var icon: CandidateIcon
     public var action: CandidateAction
 
     public init(
         id: String,
         title: String,
         subtitle: String? = nil,
-        iconPath: String? = nil,
+        icon: CandidateIcon,
         action: CandidateAction
     ) {
         self.id = id
         self.title = title
         self.subtitle = subtitle
-        self.iconPath = iconPath
+        self.icon = icon
         self.action = action
     }
+}
+
+/// 候補の左に出す絵。
+public enum CandidateIcon: Equatable, Sendable {
+    /// アプリやファイルのアイコンをパスから取る。
+    case file(path: String)
+    /// SF Symbol。パスを持たない候補（Web 検索・履歴・スニペット）に使う。
+    case symbol(String)
 }
 
 /// 候補を選んだときに起きること。

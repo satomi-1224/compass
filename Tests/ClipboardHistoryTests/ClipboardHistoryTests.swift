@@ -132,6 +132,19 @@ struct ClipboardHistoryTests {
         #expect(candidates[0].action == .paste("b"))
     }
 
+    /// アイコンを持たない候補が混ざると、その行だけ文字の左に空白が空いて
+    /// 一覧が崩れて見える。
+    @Test("候補は必ずアイコンを持つ")
+    func candidatesAlwaysHaveIcon() {
+        let url = makeStoreURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let history = makeHistory(at: url)
+        history.record("a")
+
+        #expect(history.candidates()[0].icon == .symbol("doc.on.clipboard"))
+    }
+
     /// 複数行のテキストをそのまま出すと一覧の行が崩れる。
     @Test("候補の表示は 1 行に畳む")
     func candidateTitleIsFolded() {

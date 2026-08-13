@@ -183,7 +183,7 @@ public final class FileProvider {
                 id: path,
                 title: (path as NSString).lastPathComponent,
                 subtitle: (path as NSString).abbreviatingWithTildeInPath,
-                iconPath: path,
+                icon: .file(path: path),
                 action: .open(path: path)
             )
         }

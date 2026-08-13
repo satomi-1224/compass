@@ -51,6 +51,14 @@ enum Metrics {
     /// タイトルとサブタイトルの行間。
     static let titleSpacing: CGFloat = 2
 
-    /// 入力欄に置くシンボルの大きさ。`iconWidth` の枠内に収める。
+    /// シンボルの大きさ。`iconWidth` の枠内に収める。
     static let symbolPointSize: CGFloat = 17
+
+    /// SF Symbol を `iconWidth` の枠に収まる大きさで作る。
+    static func symbol(named name: String) -> NSImage? {
+        let configuration = NSImage.SymbolConfiguration(
+            pointSize: symbolPointSize, weight: .regular)
+        return NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+            .withSymbolConfiguration(configuration)
+    }
 }

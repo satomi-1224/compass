@@ -6,7 +6,9 @@ import Testing
 struct FuzzyMatcherTests {
 
     private func candidate(_ title: String) -> Candidate {
-        Candidate(id: title, title: title, action: .open(path: "/\(title)"))
+        Candidate(
+            id: title, title: title, icon: .file(path: "/\(title)"),
+            action: .open(path: "/\(title)"))
     }
 
     // MARK: - マッチ判定
@@ -125,7 +127,9 @@ struct FuzzyMatcherTests {
     func breaksTiesByPathWhenTitlesMatch() {
         let paths = ["/c/README.md", "/a/README.md", "/b/README.md"]
         let candidates = paths.map {
-            Candidate(id: $0, title: "README.md", action: .open(path: $0))
+            Candidate(
+                id: $0, title: "README.md", icon: .file(path: $0),
+                action: .open(path: $0))
         }
 
         let forward = FuzzyMatcher.filter(candidates, query: "readme", limit: 3)

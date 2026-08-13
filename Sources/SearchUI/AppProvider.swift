@@ -202,7 +202,7 @@ public final class AppProvider {
             id: path,
             title: title,
             subtitle: (path as NSString).abbreviatingWithTildeInPath,
-            iconPath: path,
+            icon: .file(path: path),
             action: .open(path: path)
         )
     }

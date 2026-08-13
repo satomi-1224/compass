@@ -102,6 +102,7 @@ public enum ActionRunner {
             return
         }
         sendCommandV()
+        log.debug("Cmd+V を送出した")
     }
 
     /// 外部コマンドの出力をクリップボードへ載せて `Cmd+V` を送る。

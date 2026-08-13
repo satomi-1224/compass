@@ -129,6 +129,7 @@ public final class ClipboardHistory {
             Candidate(
                 id: "clipboard:\(index)",
                 title: TextSummary.line(of: text),
+                icon: .symbol("doc.on.clipboard"),
                 action: .paste(text)
             )
         }

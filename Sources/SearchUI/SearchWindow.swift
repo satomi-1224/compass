@@ -39,6 +39,7 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
     private let table = CandidateTable()
     private let container = NSVisualEffectView()
     private let maxVisibleRows: Int
+    private let log: Log
 
     /// 高さは制約で決める。**隠すだけでは制約が残り、内容の高さと panel の高さが
     /// 食い違って入力欄の上端が切れる。**
@@ -46,8 +47,9 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
     private var tableHeight: NSLayoutConstraint?
     private var resignObserver: NSObjectProtocol?
 
-    init(width: CGFloat, maxVisibleRows: Int) {
+    init(width: CGFloat, maxVisibleRows: Int, log: Log = .shared) {
         self.maxVisibleRows = max(1, maxVisibleRows)
+        self.log = log
         panel = KeyablePanel(
             contentRect: NSRect(x: 0, y: 0, width: width, height: Metrics.inputHeight),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -75,8 +77,16 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
     /// - Parameter symbolName: 入力欄の左に置く SF Symbol。今どのモードかを示す。
     func present(placeholder: String, symbolName: String, candidates: [Candidate]) {
         input.stringValue = ""
-        input.placeholderString = placeholder
-        symbolView.image = Self.symbol(named: symbolName)
+        // **プレースホルダは控えめにする。** 本文と同じ強さだと、まだ何も打って
+        // いないのに入力済みのように見える。
+        input.placeholderAttributedString = NSAttributedString(
+            string: placeholder,
+            attributes: [
+                .foregroundColor: NSColor.tertiaryLabelColor,
+                .font: Metrics.inputFont,
+            ]
+        )
+        symbolView.image = Metrics.symbol(named: symbolName)
         table.setCandidates(candidates)
         layout()
 
@@ -98,13 +108,6 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
     /// 入力欄に文字を流し込む。`--show-search` での動作確認に使う。
     func setQuery(_ text: String) {
         input.stringValue = text
-    }
-
-    private static func symbol(named name: String) -> NSImage? {
-        let configuration = NSImage.SymbolConfiguration(
-            pointSize: Metrics.symbolPointSize, weight: .regular)
-        return NSImage(systemSymbolName: name, accessibilityDescription: nil)?
-            .withSymbolConfiguration(configuration)
     }
 
     // MARK: - 配置
@@ -143,6 +146,13 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
             NSRect(x: x.rounded(), y: (top - height).rounded(), width: width, height: height),
             display: true
         )
+
+        // 見た目は数値でしか確かめられないので残す。
+        log.debug(
+            "窓: 幅=\(Int(width)) 高さ=\(Int(height)) 行=\(rows)"
+                + " 入力欄=\(Int(Metrics.inputHeight)) 行高=\(Int(Metrics.rowHeight))"
+                + " 文字左端=\(Int(Metrics.textInset))"
+        )
     }
 
     /// 上端を固定したまま画面に収まる行数。テストから呼べるように internal。
@@ -165,7 +175,9 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
         panel.hidesOnDeactivate = false
         panel.isMovable = false
 
-        container.material = .popover
+        // **`.popover` より濃い `.hudWindow` を使う。** 背景が透けすぎると
+        // 文字のコントラストが下がって読みにくい。
+        container.material = .hudWindow
         container.blendingMode = .behindWindow
         container.state = .active
         container.wantsLayer = true
@@ -186,7 +198,8 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
         input.usesSingleLineMode = true
         input.lineBreakMode = .byTruncatingTail
         input.delegate = self
-        input.translatesAutoresizingMaskIntoConstraints = false
+        // 残りの幅は入力欄が取る。
+        input.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         separator.boxType = .separator
         separator.translatesAutoresizingMaskIntoConstraints = false
@@ -194,8 +207,19 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
         table.translatesAutoresizingMaskIntoConstraints = false
         table.onActivate = { [weak self] in self?.onSubmit?() }
 
-        container.addSubview(symbolView)
-        container.addSubview(input)
+        // **アイコンと文字は StackView で縦中央を揃える。** 別々に制約を張ると、
+        // `NSTextField` のテキストが枠の中で寄って中心がずれる（実機でアイコンだけ
+        // 上に浮いて見えた）。
+        let inputRow = NSStackView(views: [symbolView, input])
+        inputRow.orientation = .horizontal
+        inputRow.alignment = .centerY
+        inputRow.spacing = Metrics.iconGap
+        inputRow.edgeInsets = NSEdgeInsets(
+            top: 0, left: Metrics.horizontalPadding, bottom: 0,
+            right: Metrics.horizontalPadding)
+        inputRow.translatesAutoresizingMaskIntoConstraints = false
+
+        container.addSubview(inputRow)
         container.addSubview(separator)
         container.addSubview(table)
 
@@ -207,22 +231,16 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
         self.tableHeight = tableHeight
 
         NSLayoutConstraint.activate([
-            symbolView.leadingAnchor.constraint(
-                equalTo: container.leadingAnchor, constant: Metrics.horizontalPadding),
+            inputRow.topAnchor.constraint(equalTo: container.topAnchor),
+            inputRow.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            inputRow.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            inputRow.heightAnchor.constraint(equalToConstant: Metrics.inputHeight),
+
+            // 候補のアイコンと同じ幅を確保する。ここが揃わないと文字の左端もずれる。
             symbolView.widthAnchor.constraint(equalToConstant: Metrics.iconWidth),
             symbolView.heightAnchor.constraint(equalToConstant: Metrics.iconWidth),
-            symbolView.centerYAnchor.constraint(equalTo: input.centerYAnchor),
 
-            input.topAnchor.constraint(equalTo: container.topAnchor),
-            // **候補のタイトルと同じ位置から始める。** 目が最初に追うのは文字の
-            // 始まりなので、ここがずれると全体が雑に見える。
-            input.leadingAnchor.constraint(
-                equalTo: container.leadingAnchor, constant: Metrics.textInset),
-            input.trailingAnchor.constraint(
-                equalTo: container.trailingAnchor, constant: -Metrics.horizontalPadding),
-            input.heightAnchor.constraint(equalToConstant: Metrics.inputHeight),
-
-            separator.topAnchor.constraint(equalTo: input.bottomAnchor),
+            separator.topAnchor.constraint(equalTo: inputRow.bottomAnchor),
             separator.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             separator.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             separatorHeight,

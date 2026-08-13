@@ -244,7 +244,7 @@ struct AppProviderTests {
         let candidate = AppProvider.candidate(for: "/Applications/Google Chrome.app")
         #expect(candidate.title == "Google Chrome")
         #expect(candidate.action == .open(path: "/Applications/Google Chrome.app"))
-        #expect(candidate.iconPath == "/Applications/Google Chrome.app")
+        #expect(candidate.icon == .file(path: "/Applications/Google Chrome.app"))
     }
 }
 

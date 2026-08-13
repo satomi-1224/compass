@@ -28,6 +28,7 @@ public final class SnippetLibrary {
                     id: "snippet:\(definition.title)",
                     title: definition.title,
                     subtitle: TextSummary.line(of: expanded),
+                    icon: .symbol("text.quote"),
                     action: .paste(expanded)
                 )
             case .command(let command):
@@ -35,6 +36,8 @@ public final class SnippetLibrary {
                     id: "snippet:\(definition.title)",
                     title: definition.title,
                     subtitle: "$ \(TextSummary.line(of: command))",
+                    // 外部コマンドを走らせることが見た目で分かるようにする。
+                    icon: .symbol("terminal"),
                     action: .pasteCommandOutput(command)
                 )
             }
