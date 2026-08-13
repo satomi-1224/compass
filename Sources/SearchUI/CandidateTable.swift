@@ -45,6 +45,7 @@ final class CandidateTable: NSView {
         // 意図しない候補が実行される。
         tableView.selectRowIndexes([0], byExtendingSelection: false)
         tableView.scrollRowToVisible(0)
+        refreshSelectionAppearance()
     }
 
     func moveSelection(by delta: Int) {
@@ -53,6 +54,20 @@ final class CandidateTable: NSView {
         let next = min(max(tableView.selectedRow + delta, 0), candidates.count - 1)
         tableView.selectRowIndexes([next], byExtendingSelection: false)
         tableView.scrollRowToVisible(next)
+        refreshSelectionAppearance()
+    }
+
+    /// 選択に合わせて文字とシンボルの色を切り替える。
+    ///
+    /// **`backgroundStyle` には頼れない。** `refusesFirstResponder = true` のため
+    /// 表が first responder にならず `isEmphasized` が立たないので、
+    /// `.emphasized` が渡ってこない。ダークモードでは `labelColor` が白なので
+    /// 偶然読めていたが、ライトモードでは濃い青地に黒文字になる。
+    private func refreshSelectionAppearance() {
+        for row in 0..<tableView.numberOfRows {
+            let view = tableView.view(atColumn: 0, row: row, makeIfNecessary: false)
+            (view as? CandidateRowView)?.setSelected(tableView.selectedRow == row)
+        }
     }
 
     // MARK: - 組み立て
@@ -111,8 +126,12 @@ extension CandidateTable: NSTableViewDataSource, NSTableViewDelegate {
             tableView.makeView(withIdentifier: identifier, owner: self) as? CandidateRowView
             ?? CandidateRowView()
         view.identifier = identifier
-        view.configure(with: candidates[row])
+        view.configure(with: candidates[row], selected: tableView.selectedRow == row)
         return view
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        refreshSelectionAppearance()
     }
 
     /// 角丸のハイライトを描くために差し替える。
@@ -148,9 +167,6 @@ private final class RoundedRowView: NSTableRowView {
 }
 
 /// 1 行の見た目。アイコン + タイトル + サブタイトル。
-///
-/// `NSTableCellView` を継承しているのは `backgroundStyle` を受け取るため。
-/// 選択されたときに文字色を切り替えないと、青地に黒文字で読めなくなる。
 @MainActor
 private final class CandidateRowView: NSTableCellView {
 
@@ -163,19 +179,19 @@ private final class CandidateRowView: NSTableCellView {
     init() {
         super.init(frame: .zero)
 
-        iconView.imageScaling = .scaleProportionallyUpOrDown
+        // **拡大させない。** `Metrics.symbolPointSize` で決めた大きさを保つ。
+        // 上げ幅を許すと、入力欄のシンボルと候補のシンボルで太さが変わって見える。
+        iconView.imageScaling = .scaleProportionallyDown
         iconView.translatesAutoresizingMaskIntoConstraints = false
 
         titleLabel.font = Metrics.titleFont
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.usesSingleLineMode = true
-        titleLabel.textColor = .labelColor
 
         // パスは末尾のほうが手がかりになる。中間を省く。
         subtitleLabel.font = Metrics.subtitleFont
         subtitleLabel.lineBreakMode = .byTruncatingMiddle
         subtitleLabel.usesSingleLineMode = true
-        subtitleLabel.textColor = .secondaryLabelColor
 
         let text = NSStackView(views: [titleLabel, subtitleLabel])
         text.orientation = .vertical
@@ -200,6 +216,8 @@ private final class CandidateRowView: NSTableCellView {
                 lessThanOrEqualTo: trailingAnchor, constant: -Metrics.horizontalPadding),
             text.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
+
+        setSelected(false)
     }
 
     @available(*, unavailable)
@@ -207,7 +225,7 @@ private final class CandidateRowView: NSTableCellView {
         fatalError("Interface Builder からは使わない")
     }
 
-    func configure(with candidate: Candidate) {
+    func configure(with candidate: Candidate, selected: Bool) {
         titleLabel.stringValue = candidate.title
         subtitleLabel.stringValue = candidate.subtitle ?? ""
         subtitleLabel.isHidden = candidate.subtitle == nil
@@ -219,24 +237,22 @@ private final class CandidateRowView: NSTableCellView {
             usesSymbol = false
         case .symbol(let name):
             iconView.image = Metrics.symbol(named: name)
-            iconView.contentTintColor = .secondaryLabelColor
             usesSymbol = true
         }
+
+        setSelected(selected)
     }
 
-    /// 選択されると背景が濃くなる。文字色とシンボルの色を合わせないと読めない。
-    override var backgroundStyle: NSView.BackgroundStyle {
-        didSet {
-            let emphasized = backgroundStyle == .emphasized
-            titleLabel.textColor = emphasized ? .alternateSelectedControlTextColor : .labelColor
-            subtitleLabel.textColor =
-                emphasized
-                ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.8)
-                : .secondaryLabelColor
-            if usesSymbol {
-                iconView.contentTintColor =
-                    emphasized ? .alternateSelectedControlTextColor : .secondaryLabelColor
-            }
+    /// 選択されると背景が濃くなる。文字とシンボルの色を合わせないと読めない。
+    func setSelected(_ selected: Bool) {
+        titleLabel.textColor = selected ? .alternateSelectedControlTextColor : .labelColor
+        subtitleLabel.textColor =
+            selected
+            ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.8)
+            : .secondaryLabelColor
+        if usesSymbol {
+            iconView.contentTintColor =
+                selected ? .alternateSelectedControlTextColor : .secondaryLabelColor
         }
     }
 }

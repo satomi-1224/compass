@@ -100,14 +100,19 @@ struct SearchWindowTests {
         #expect(submitted == 1)
     }
 
-    @Test("Esc で onCancel が呼ばれる")
+    /// **`Esc` と「他のアプリへ移った」は別の経路にする。** 後者で元のアプリを
+    /// 呼び戻すと、ユーザーが今クリックした相手を追い越してしまう。
+    @Test("Esc は onCancel だけを呼び、onResignKey は呼ばない")
     func cancelOnEscape() {
         let window = makeWindow()
         var cancelled = 0
+        var resigned = 0
         window.onCancel = { cancelled += 1 }
+        window.onResignKey = { resigned += 1 }
 
         #expect(send(#selector(NSResponder.cancelOperation(_:)), to: window))
         #expect(cancelled == 1)
+        #expect(resigned == 0)
     }
 
     /// 捕まえたキーだけ true を返す。それ以外は field editor に任せる

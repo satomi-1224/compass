@@ -66,7 +66,11 @@ public final class SearchController {
     /// 窓は開くたびに作り直す。設定（幅・表示件数）の変更が自然に反映される。
     public func present(_ presentation: Presentation) {
         // 貼り先を覚えておく。窓を出す前に取らないと自分自身になる。
-        previousApplication = NSWorkspace.shared.frontmostApplication
+        // **既に開いているときは上書きしない。** 二度目の値は自分自身や
+        // 古いものになりうる。
+        if window == nil {
+            previousApplication = NSWorkspace.shared.frontmostApplication
+        }
 
         let appearance = config().appearance
         let window = SearchWindow(
@@ -75,6 +79,9 @@ public final class SearchController {
         window.onQueryChange = { [weak self] text in self?.updateCandidates(for: text) }
         window.onSubmit = { [weak self] in self?.submit() }
         window.onCancel = { [weak self] in self?.dismiss() }
+        // **他のアプリへ移った場合は元のアプリを呼び戻さない。** ユーザーが今
+        // クリックした相手を追い越してしまう。
+        window.onResignKey = { [weak self] in self?.dismiss(restoringFocus: false) }
 
         self.window = window
         self.presentation = presentation
@@ -98,11 +105,19 @@ public final class SearchController {
         }
     }
 
-    public func dismiss() {
+    /// - Parameter restoringFocus: 開く前のアプリへ戻すか。
+    ///   **貼り付けのときだけ true にする。** 他のアプリへ移って閉じた場合や、
+    ///   アプリ・URL を開く場合に戻すと、来てほしい相手を追い越してしまう。
+    public func dismiss(restoringFocus: Bool = true) {
         files.cancel()
         window?.dismiss()
         window = nil
         listSource = []
+
+        guard restoringFocus else {
+            previousApplication = nil
+            return
+        }
         restorePreviousApplication()
     }
 
@@ -115,7 +130,11 @@ public final class SearchController {
         previousApplication = nil
         // 自分自身なら戻す相手がいない。
         guard previous.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
-        previous.activate()
+        // `.accessory` のアプリからの activate は macOS の判断で断られることがある。
+        // 断られたら貼り先が変わらないので、手がかりを残す。
+        if !previous.activate() {
+            log.debug("前面へ戻せなかった: \(previous.bundleIdentifier ?? "不明")")
+        }
     }
 
     /// 入力を流し込んで候補を更新する。ホットキーを押さずに挙動を確かめるための
@@ -208,22 +227,30 @@ public final class SearchController {
 
     private func submit() {
         guard let candidate = window?.selected else { return }
-        log.debug("実行: \(candidate.title)")
-        dismiss()
+        // **中身をログへ出さない。** クリップボード履歴の title はコピーした
+        // テキストそのもの。launchd 経由だと永続ファイルに平文で残る
+        // （貼るときに transient を立てて履歴から守っているのと矛盾する）。
+        log.debug("実行: \(candidate.id)")
 
         let log = self.log
         switch candidate.action {
         case .paste(let text):
-            log.debug("貼り付け: \(TextSummary.line(of: text, limit: 40))")
+            log.debug("貼り付け: \(text.count) 文字")
+            dismiss()
             pasteAfterFocusReturns { ActionRunner.paste(text, log: log) }
 
         case .pasteCommandOutput(let command):
             // **コマンドの実行も同じ遅延に載せる。** `echo` や
             // `git branch --show-current` は数ミリ秒で終わるので、出力を待つだけでは
             // まだ閉じ切っていない自分の入力欄に貼られてしまう。
+            dismiss()
             pasteAfterFocusReturns { ActionRunner.pasteOutput(of: command, log: log) }
 
         case .open, .openURL:
+            // **開く相手が前面に来るべきなので、元のアプリへ戻さない。**
+            // `activate()` は非同期に効くため、戻してから開くと起動したアプリが
+            // 元のアプリの後ろに隠れる。
+            dismiss(restoringFocus: false)
             ActionRunner.run(candidate.action, log: log)
         }
     }

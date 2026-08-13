@@ -24,8 +24,14 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
     var onQueryChange: ((String) -> Void)?
     /// `Enter` が押された。
     var onSubmit: (() -> Void)?
-    /// `Esc`、または他のアプリへ移ったので閉じるべき。
+    /// `Esc` が押された。**元のアプリへ戻すのはこの経路だけ。**
     var onCancel: (() -> Void)?
+    /// 他のアプリへ移ったので閉じるべき。
+    ///
+    /// `onCancel` と分けているのは、**ここで元のアプリを呼び戻すとユーザーが
+    /// 今クリックした相手を追い越してしまう**（Safari で開いて Terminal を
+    /// クリックすると Safari が前に出る）。
+    var onResignKey: (() -> Void)?
 
     /// 画面の上端からどれだけ下げるか。上寄り中央に出す（requirements.md 3.2）。
     private static let verticalInset: CGFloat = 0.18
@@ -260,7 +266,7 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, self.panel.isVisible else { return }
-                self.onCancel?()
+                self.onResignKey?()
             }
         }
     }
