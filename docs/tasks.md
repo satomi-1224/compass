@@ -275,8 +275,14 @@
 
 - [ ] home-manager 経由での launchd 登録（switch が必要）
   - launchd の設定自体は模擬 plist で確認済み（起動・KeepAlive での復帰・ログ）
-- [ ] 検索窓の操作（`↑↓` で選択、`Enter` で実行、`Esc` で閉じる、他のアプリへ移ると閉じる）
-- [ ] 候補が 0 件のときに入力欄が切れていないこと（レビュー 2 回目の指摘 5 の修正確認）
+- [x] 検索窓のキー操作 → **自動テストで担保した**
+  - `↑↓` の端での止まり方、`Enter`、`Esc`、扱わないキーを field editor へ渡すこと、
+    画面に収まる行数のクランプ（`max_results = 50` でも画面外へ出ない）
+- [x] 検索結果の中身 → `--print-candidates` で確認した
+  - `chr` → Google Chrome / `term` → Terminal, WezTerm
+  - `g swift` → Google の URL / `gh compass` → GitHub の URL（キーワード切替）
+- [ ] **見た目**（ブラー・角丸・表示位置、候補 0 件のときに入力欄が切れていないこと）
+- [ ] 他のアプリへ移ったときに閉じること（`didResignKeyNotification`）
 - [ ] ホットキーの発火（押して実際にコマンドが走るか）
 - [ ] クリップボード履歴のペースト（**アクセシビリティ権限が必要**）
 - [ ] スニペットのペースト（同上）

@@ -136,8 +136,8 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
         )
     }
 
-    /// 上端を固定したまま画面に収まる行数。
-    private static func rowsThatFit(in area: NSRect) -> Int {
+    /// 上端を固定したまま画面に収まる行数。テストから呼べるように internal。
+    static func rowsThatFit(in area: NSRect) -> Int {
         let available =
             area.height * (1 - verticalInset) - inputHeight - separatorThickness - bottomMargin
         return max(1, Int(available / CandidateTable.rowHeight))
