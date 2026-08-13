@@ -104,12 +104,27 @@ public final class SearchController {
         case .list:
             let limit = config().appearance.maxResults
             window.setCandidates(FuzzyMatcher.filter(listSource, query: text, limit: limit))
+
         case .search:
-            updateSearchCandidates(for: text, in: window)
+            candidates(for: text) { [weak self] found in
+                guard let self else { return }
+                // 届くまでに入力が変わっているかもしれない。
+                guard let window = self.window, window.query == text else { return }
+                self.log.debug("候補: \"\(text)\" → \(found.count) 件")
+                window.setCandidates(found)
+            }
         }
     }
 
-    private func updateSearchCandidates(for text: String, in window: SearchWindow) {
+    /// クエリに対する検索候補。
+    ///
+    /// **窓を介さずに使える。** `--print-candidates` から呼んで、ホットキーも
+    /// 権限も要らずに検索の挙動を確かめられるようにしてある。
+    ///
+    /// ファイル検索は Spotlight を待つため、completion は非同期に呼ばれることがある。
+    public func candidates(
+        for text: String, completion: @escaping @MainActor ([Candidate]) -> Void
+    ) {
         let current = config()
         let limit = current.appearance.maxResults
         let parsed = QueryParser.parse(text, keywords: current.search.keywords)
@@ -119,31 +134,29 @@ public final class SearchController {
 
         guard !parsed.query.isEmpty else {
             // 入力を促す。空で全アプリを並べても選べない。
-            window.setCandidates([])
+            completion([])
             return
         }
 
         switch parsed.mode {
         case .apps:
-            window.setCandidates(apps.candidates(matching: parsed.query, limit: limit))
+            completion(apps.candidates(matching: parsed.query, limit: limit))
 
         case .files:
             files.search(
                 parsed.query,
                 scopes: current.search.files.scopes,
                 limit: current.search.files.maxResults
-            ) { [weak self] candidates in
-                // 届くまでに入力が変わっているかもしれない。
-                guard let window = self?.window, window.query == text else { return }
-                window.setCandidates(Array(candidates.prefix(limit)))
+            ) { found in
+                completion(Array(found.prefix(limit)))
             }
 
         case .web(let keyword):
             guard let url = keyword.resolvedURL(for: parsed.query) else {
-                window.setCandidates([])
+                completion([])
                 return
             }
-            window.setCandidates([
+            completion([
                 Candidate(
                     id: "web:\(keyword.prefix)",
                     title: parsed.query,

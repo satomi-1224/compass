@@ -102,6 +102,7 @@ f report   → ファイル: ~/Documents/report.md
 ```
 
 - **`.app` の中には入らない。** 内部のヘルパーや更新ツールを拾うと候補が埋まる
+- **Dock に出ないアプリ（`LSUIElement` / `LSBackgroundOnly`）は候補にしない。** `/System/Library/CoreServices` にはユーザーが起動しないヘルパーが 100 以上あり、実測で 231 件のうち 133 件を占めていた。ディレクトリごと外すと Finder まで落ちるため Info.plist で判別する（除外後 126 件）
 - **シンボリックリンクは追う。** home-manager は `~/Applications/Home Manager Apps` を nix store へのリンクとして張るため、追わないと配置したアプリが 1 つも拾えない（実際に `mpv.app` が漏れた）。実体のパスで訪問済みを覚えて重複と循環を防ぐ
 - Spotlight の live update が使えないので、**窓を開くたびに走査し直す**
 - 表示名は**ファイル名から `.app` を落としたもの**。ローカライズ名は使わない（7.2）

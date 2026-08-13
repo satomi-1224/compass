@@ -130,6 +130,68 @@ struct AppProviderTests {
         #expect(provider.count == 0)
     }
 
+    private func writePlist(_ dictionary: [String: Any], to url: URL) throws {
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: dictionary, format: .xml, options: 0)
+        try data.write(to: url)
+    }
+
+    /// `/System/Library/CoreServices` にはユーザーが起動しないヘルパーが 100 以上
+    /// あり、そのままだと候補の半分以上を占める（実測で 231 件のうち 133 件）。
+    @Test("Dock に出ないアプリを候補にしない")
+    func excludesBackgroundApps() throws {
+        let base = try makeTree(["Normal.app/Contents", "Agent.app/Contents"])
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        try writePlist(
+            ["LSUIElement": true],
+            to: base.appendingPathComponent("Agent.app/Contents/Info.plist"))
+        try writePlist(
+            ["CFBundleName": "Normal"],
+            to: base.appendingPathComponent("Normal.app/Contents/Info.plist"))
+
+        let provider = AppProvider(roots: [base.path])
+        provider.refresh()
+
+        #expect(provider.count == 1)
+        #expect(provider.candidates(matching: "", limit: 9).map(\.title) == ["Normal"])
+    }
+
+    @Test("LSBackgroundOnly も除く")
+    func excludesBackgroundOnly() throws {
+        let base = try makeTree(["Daemon.app/Contents"])
+        defer { try? FileManager.default.removeItem(at: base) }
+        try writePlist(
+            ["LSBackgroundOnly": true],
+            to: base.appendingPathComponent("Daemon.app/Contents/Info.plist"))
+
+        #expect(AppProvider.isBackgroundApp(base.appendingPathComponent("Daemon.app").path))
+    }
+
+    /// `LSUIElement` は Bool でも文字列 `"1"` でも書ける。
+    @Test("文字列で書かれた LSUIElement も解釈する")
+    func acceptsStringFlag() throws {
+        let base = try makeTree(["A.app/Contents", "B.app/Contents"])
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        try writePlist(
+            ["LSUIElement": "1"], to: base.appendingPathComponent("A.app/Contents/Info.plist"))
+        try writePlist(
+            ["LSUIElement": "0"], to: base.appendingPathComponent("B.app/Contents/Info.plist"))
+
+        #expect(AppProvider.isBackgroundApp(base.appendingPathComponent("A.app").path))
+        #expect(AppProvider.isBackgroundApp(base.appendingPathComponent("B.app").path) == false)
+    }
+
+    /// 落とすと拾えるものが減るだけなので、読めないときは普通のアプリとして扱う。
+    @Test("Info.plist が無ければ普通のアプリとして扱う")
+    func treatsMissingPlistAsNormal() throws {
+        let base = try makeTree(["NoPlist.app"])
+        defer { try? FileManager.default.removeItem(at: base) }
+        #expect(
+            AppProvider.isBackgroundApp(base.appendingPathComponent("NoPlist.app").path) == false)
+    }
+
     @Test("`.app` を落とした名前を表示する")
     func stripsAppExtension() {
         let candidate = AppProvider.candidate(for: "/Applications/Google Chrome.app")

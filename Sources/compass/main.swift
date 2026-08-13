@@ -236,6 +236,35 @@ if CommandLine.arguments.contains("--print-placeholders") {
     exit(0)
 }
 
+// `--print-candidates <クエリ>` で検索結果を出して終わる。
+//
+// **窓もホットキーもアクセシビリティ権限も使わずに検索を検証できる。**
+// キーワード切替（`g swift`）も含めて、実際に窓へ出るのと同じ候補が出る。
+if let index = CommandLine.arguments.firstIndex(of: "--print-candidates"),
+    CommandLine.arguments.indices.contains(index + 1)
+{
+    let query = CommandLine.arguments[index + 1]
+    let store = ConfigStore()
+    store.load()
+
+    let controller = SearchController(config: { store.config })
+    controller.start()
+    controller.candidates(for: query) { candidates in
+        for candidate in candidates {
+            print("\(candidate.title)\t\(candidate.subtitle ?? "")")
+        }
+        exit(0)
+    }
+
+    // ファイル検索は Spotlight を待つ。結果が届くまで RunLoop を回す。
+    // 返らないまま待ち続けないよう上限を置く。
+    DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
+        FileHandle.standardError.write(Data("候補が返らなかった（10 秒）\n".utf8))
+        exit(1)
+    }
+    RunLoop.main.run()
+}
+
 let application = NSApplication.shared
 // delegate は weak 参照なので、グローバルに置いて保持する。
 let delegate = CompassDelegate()

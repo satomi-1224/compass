@@ -109,6 +109,8 @@ public final class AppProvider {
             let child = "\(path)/\(entry)"
 
             if entry.hasSuffix(".app") {
+                // Dock に出ないアプリは候補にしない。
+                if Self.isBackgroundApp(child) { continue }
                 // 実体で重複を判定し、開くのは見つけた経路のまま。
                 let target = URL(fileURLWithPath: child).resolvingSymlinksInPath().path
                 if found[target] == nil {
@@ -125,6 +127,33 @@ public final class AppProvider {
             else { continue }
 
             collect(at: child, depth: depth + 1, visited: &visited, into: &found)
+        }
+    }
+
+    /// Dock に出ないアプリか（`LSUIElement` / `LSBackgroundOnly`）。
+    ///
+    /// `/System/Library/CoreServices` にはユーザーが起動しないヘルパーが 100 以上
+    /// あり、そのままだと候補の半分以上を占める（実測で 231 件のうち 133 件）。
+    /// **ディレクトリごと外すと Finder まで落ちる**ため、Info.plist で判別する。
+    ///
+    /// `LSUIElement` は Bool でも文字列 `"1"` でも書けるので両方受ける。
+    nonisolated static func isBackgroundApp(_ path: String) -> Bool {
+        guard let data = FileManager.default.contents(atPath: "\(path)/Contents/Info.plist"),
+            let info = (try? PropertyListSerialization.propertyList(from: data, format: nil))
+                as? [String: Any]
+        else {
+            // 読めないものは普通のアプリとして扱う。落とすと拾えるものが減るだけ。
+            return false
+        }
+        return isTrue(info["LSUIElement"]) || isTrue(info["LSBackgroundOnly"])
+    }
+
+    private nonisolated static func isTrue(_ value: Any?) -> Bool {
+        switch value {
+        case let bool as Bool: bool
+        case let number as NSNumber: number.boolValue
+        case let string as String: string == "1" || string.lowercased() == "true"
+        default: false
         }
     }
 
