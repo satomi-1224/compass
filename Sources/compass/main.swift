@@ -27,7 +27,11 @@ final class CompassDelegate: NSObject, NSApplicationDelegate {
         buildMenu()
 
         // 設定は使うたびに読み直させる。リロードがそのまま反映される。
-        let search = SearchController(config: { [weak self] in self?.store.config ?? Config() })
+        let search = SearchController(
+            config: { [weak self] in self?.store.config ?? Config() },
+            issues: { [weak self] in self?.store.issues ?? [] },
+            configDirectory: store.directory
+        )
         search.start()
         self.search = search
 
@@ -163,19 +167,21 @@ final class CompassDelegate: NSObject, NSApplicationDelegate {
 
     /// 一覧を開閉する。
     ///
+    /// **同じ一覧なら閉じ、違う入口なら切り替える。** 履歴を見ている最中に
+    /// スニペットのキーを押したら、閉じるのではなくスニペットが出てほしい。
+    ///
     /// 候補は**開くときだけ**作る。閉じるときに作っても捨てるだけで、
     /// クリップボード履歴のように件数が多いと無駄になる。
     private func toggleList(
         placeholder: String, symbolName: String, candidates: () -> [Candidate]
     ) {
         guard let search else { return }
-        if search.isVisible {
+        if search.isShowing(.list(placeholder)) {
             search.dismiss()
-        } else {
-            search.present(
-                .list(
-                    placeholder: placeholder, symbolName: symbolName, candidates: candidates()))
+            return
         }
+        search.present(
+            .list(placeholder: placeholder, symbolName: symbolName, candidates: candidates()))
     }
 
     /// **`Cmd+V` を解釈させるには Edit メニューが必要**（requirements.md 7.4）。
@@ -222,7 +228,8 @@ final class CompassDelegate: NSObject, NSApplicationDelegate {
 // `--print-apps | grep Remap` で PWA が出るかを見る、といった使い方をする。
 if CommandLine.arguments.contains("--print-apps") {
     let provider = AppProvider()
-    provider.refresh()
+    // **同期版を使う。** refresh() はバックグラウンドで走るので、直後に読むと空。
+    provider.start()
     for candidate in provider.candidates(matching: "", limit: .max) {
         print("\(candidate.title)\t\(candidate.subtitle ?? "")")
     }

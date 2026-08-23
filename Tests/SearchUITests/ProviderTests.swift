@@ -27,7 +27,7 @@ struct AppProviderTests {
         defer { try? FileManager.default.removeItem(at: base) }
 
         let provider = AppProvider(roots: [base.path])
-        provider.refresh()
+        provider.start()
 
         #expect(provider.count == 2)
         #expect(provider.candidates(matching: "saf", limit: 9).map(\.title) == ["Safari"])
@@ -43,7 +43,7 @@ struct AppProviderTests {
         defer { try? FileManager.default.removeItem(at: base) }
 
         let provider = AppProvider(roots: [base.path])
-        provider.refresh()
+        provider.start()
 
         #expect(provider.count == 2)
         #expect(provider.candidates(matching: "claude", limit: 9).count == 1)
@@ -57,7 +57,7 @@ struct AppProviderTests {
         defer { try? FileManager.default.removeItem(at: base) }
 
         let provider = AppProvider(roots: [base.path])
-        provider.refresh()
+        provider.start()
 
         #expect(provider.count == 1)
         #expect(provider.candidates(matching: "helper", limit: 9).isEmpty)
@@ -75,7 +75,7 @@ struct AppProviderTests {
         )
 
         let provider = AppProvider(roots: [base.appendingPathComponent("Applications").path])
-        provider.refresh()
+        provider.start()
 
         #expect(provider.candidates(matching: "mpv", limit: 9).count == 1)
     }
@@ -93,7 +93,7 @@ struct AppProviderTests {
         }
 
         let provider = AppProvider(roots: [base.appendingPathComponent("Applications").path])
-        provider.refresh()
+        provider.start()
 
         #expect(provider.candidates(matching: "mpv", limit: 9).count == 1)
     }
@@ -107,7 +107,7 @@ struct AppProviderTests {
         try FileManager.default.createSymbolicLink(at: apps.appendingPathComponent("self"), withDestinationURL: apps)
 
         let provider = AppProvider(roots: [apps.path])
-        provider.refresh()
+        provider.start()
 
         #expect(provider.count == 0)
     }
@@ -118,7 +118,7 @@ struct AppProviderTests {
         defer { try? FileManager.default.removeItem(at: base) }
 
         let provider = AppProvider(roots: [base.path])
-        provider.refresh()
+        provider.start()
 
         #expect(provider.count == 0)
     }
@@ -126,8 +126,13 @@ struct AppProviderTests {
     @Test("無いディレクトリを渡しても落ちない")
     func toleratesMissingRoots() {
         let provider = AppProvider(roots: ["/nonexistent-\(UUID().uuidString)"])
-        provider.refresh()
+        provider.start()
         #expect(provider.count == 0)
+    }
+
+    /// Info.plist を読んで隠すかどうかだけ見る。
+    private func isHidden(_ url: URL) -> Bool {
+        AppProvider.readMetadata(for: url.path, languages: []).hidden
     }
 
     private func writePlist(_ dictionary: [String: Any], to url: URL) throws {
@@ -206,10 +211,10 @@ struct AppProviderTests {
             ["LSBackgroundOnly": "NO"],
             to: base.appendingPathComponent("No.app/Contents/Info.plist"))
 
-        #expect(AppProvider.isHidden(base.appendingPathComponent("Yes.app").path))
-        #expect(AppProvider.isHidden(base.appendingPathComponent("True.app").path))
-        #expect(AppProvider.isHidden(base.appendingPathComponent("One.app").path))
-        #expect(AppProvider.isHidden(base.appendingPathComponent("No.app").path) == false)
+        #expect(isHidden(base.appendingPathComponent("Yes.app")))
+        #expect(isHidden(base.appendingPathComponent("True.app")))
+        #expect(isHidden(base.appendingPathComponent("One.app")))
+        #expect(isHidden(base.appendingPathComponent("No.app")) == false)
     }
 
     @Test("走査でも LSBackgroundOnly を除く")
@@ -225,7 +230,7 @@ struct AppProviderTests {
             to: base.appendingPathComponent("Normal.app/Contents/Info.plist"))
 
         let provider = AppProvider(roots: [base.path])
-        provider.refresh()
+        provider.start()
 
         #expect(provider.count == 1)
         #expect(provider.candidates(matching: "", limit: 9).map(\.title) == ["Normal"])
@@ -236,20 +241,177 @@ struct AppProviderTests {
     func treatsMissingPlistAsNormal() throws {
         let base = try makeTree(["NoPlist.app"])
         defer { try? FileManager.default.removeItem(at: base) }
-        #expect(AppProvider.isHidden(base.appendingPathComponent("NoPlist.app").path) == false)
+        #expect(isHidden(base.appendingPathComponent("NoPlist.app")) == false)
     }
 
     @Test("`.app` を落とした名前を表示する")
-    func stripsAppExtension() {
-        let candidate = AppProvider.candidate(for: "/Applications/Google Chrome.app")
+    func stripsAppExtension() throws {
+        let base = try makeTree(["Google Chrome.app"])
+        defer { try? FileManager.default.removeItem(at: base) }
+        let path = base.appendingPathComponent("Google Chrome.app").path
+
+        let metadata = AppProvider.readMetadata(for: path, languages: ["ja"])
+        #expect(metadata.title == "Google Chrome")
+        // 別名は表示名と違うときだけ持つ。同じものを二度照合しない。
+        #expect(metadata.alias == nil)
+
+        let candidate = AppProvider.candidate(for: path, metadata: metadata)
         #expect(candidate.title == "Google Chrome")
-        #expect(candidate.action == .open(path: "/Applications/Google Chrome.app"))
-        #expect(candidate.icon == .file(path: "/Applications/Google Chrome.app"))
+        #expect(candidate.action == .open(path: path))
+        #expect(candidate.icon == .file(path: path))
+    }
+
+    // MARK: - 表示名
+
+    /// **macOS 13 以降のシステムアプリはここに名前を持つ。** Foundation の表示名 API は
+    /// `.loctable` を読まないので、日本語環境で 169 件中 91 件が英名のままになっていた。
+    @Test("InfoPlist.loctable から表示名を取る")
+    func readsNameFromLoctable() throws {
+        let base = try makeTree(["System Settings.app/Contents/Resources"])
+        defer { try? FileManager.default.removeItem(at: base) }
+        let path = base.appendingPathComponent("System Settings.app").path
+
+        try writePlist(
+            ["ja": ["CFBundleName": "システム設定"], "en": ["CFBundleName": "System Settings"]],
+            to: URL(fileURLWithPath: "\(path)/Contents/Resources/InfoPlist.loctable"))
+
+        let metadata = AppProvider.readMetadata(for: path, languages: ["ja-JP", "ja"])
+        #expect(metadata.title == "システム設定")
+        // 英名でも引けないと `sys` で辿り着けなくなる。
+        #expect(metadata.alias == "System Settings")
+    }
+
+    /// 第三者アプリは言語ごとの `.strings` に持つことが多い。
+    @Test("lproj の InfoPlist.strings からも表示名を取る")
+    func readsNameFromStrings() throws {
+        let base = try makeTree(["Thing.app/Contents/Resources/ja.lproj"])
+        defer { try? FileManager.default.removeItem(at: base) }
+        let path = base.appendingPathComponent("Thing.app").path
+
+        try writePlist(
+            ["CFBundleDisplayName": "もの"],
+            to: URL(fileURLWithPath: "\(path)/Contents/Resources/ja.lproj/InfoPlist.strings"))
+
+        let metadata = AppProvider.readMetadata(for: path, languages: ["ja"])
+        #expect(metadata.title == "もの")
+        #expect(metadata.alias == "Thing")
+    }
+
+    /// 対応する言語が無ければファイル名のまま。**勝手に英名以外へ寄せない。**
+    @Test("知らない言語なら表示名は変えない")
+    func keepsFileNameWithoutLocalization() throws {
+        let base = try makeTree(["Thing.app/Contents/Resources"])
+        defer { try? FileManager.default.removeItem(at: base) }
+        let path = base.appendingPathComponent("Thing.app").path
+
+        try writePlist(
+            ["fr": ["CFBundleName": "Chose"]],
+            to: URL(fileURLWithPath: "\(path)/Contents/Resources/InfoPlist.loctable"))
+
+        let metadata = AppProvider.readMetadata(for: path, languages: ["ja"])
+        #expect(metadata.title == "Thing")
+        #expect(metadata.alias == nil)
+    }
+
+    /// `ja-JP` の設定でも、テーブルの側は `ja` で持っていることがある。
+    @Test("地域付きの言語タグは短い側にも落とす")
+    func fallsBackToBaseLanguage() {
+        #expect(AppProvider.languageCandidates(from: ["ja-JP"]) == ["ja-JP", "ja"])
+        #expect(
+            AppProvider.languageCandidates(from: ["zh-Hans-CN", "en"])
+                == ["zh-Hans-CN", "zh-Hans", "zh", "en"])
+        // 同じものを二度引かない。
+        #expect(AppProvider.languageCandidates(from: ["ja", "ja-JP"]) == ["ja", "ja-JP"])
+    }
+
+    /// 隠すと決めたアプリの表示名は使わないので、読みに行くだけ無駄。
+    @Test("隠すアプリの表示名は引かない")
+    func skipsNameLookupForHiddenApps() throws {
+        let base = try makeTree(["Daemon.app/Contents/Resources"])
+        defer { try? FileManager.default.removeItem(at: base) }
+        let path = base.appendingPathComponent("Daemon.app").path
+
+        try writePlist(
+            ["LSBackgroundOnly": true],
+            to: URL(fileURLWithPath: "\(path)/Contents/Info.plist"))
+        try writePlist(
+            ["ja": ["CFBundleName": "常駐"]],
+            to: URL(fileURLWithPath: "\(path)/Contents/Resources/InfoPlist.loctable"))
+
+        let metadata = AppProvider.readMetadata(for: path, languages: ["ja"])
+        #expect(metadata.hidden)
+        #expect(metadata.title == "Daemon")
+    }
+
+    // MARK: - 走査のタイミング
+
+    /// ホットキーを押してから窓が出るまでに 150ms の走査を挟まないための逃がし方。
+    /// 走査が終わったら知らせて、同じ入力で引き直させる。
+    @Test("refresh はバックグラウンドで走り、終わったら知らせる")
+    func refreshRunsInBackground() async throws {
+        let base = try makeTree(["Safari.app"])
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let provider = AppProvider(roots: [base.path])
+        var notified = 0
+        provider.onRefresh = { notified += 1 }
+
+        provider.refresh()
+        // 呼んだ直後はまだ空。ここで待たないのが目的。
+        #expect(provider.count == 0)
+
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(provider.count == 1)
+        #expect(notified == 1)
+    }
+
+    /// 中身が変わっていないのに知らせると、入力中に一覧が作り直されてちらつく。
+    @Test("内容が変わらなければ知らせない")
+    func doesNotNotifyWhenUnchanged() async throws {
+        let base = try makeTree(["Safari.app"])
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let provider = AppProvider(roots: [base.path])
+        provider.start()
+        var notified = 0
+        provider.onRefresh = { notified += 1 }
+
+        provider.refresh()
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(notified == 0)
     }
 }
 
 @Suite("FileProvider")
 struct FileProviderTests {
+
+    /// `~/Library` には数万件の支援ファイルがあり、`f report` のような入力でも
+    /// 上位に混ざる。自分で置いたものを探しに来ている以上、邪魔にしかならない。
+    @Test("除外する場所の下は落とす")
+    func excludesConfiguredPrefixes() {
+        let prefixes = FileProvider.expanded(["~/Library", "/private/var"])
+        let home = NSHomeDirectory()
+
+        #expect(FileProvider.isExcluded("\(home)/Library/Caches/a.txt", by: prefixes))
+        #expect(FileProvider.isExcluded("/private/var/tmp/a.txt", by: prefixes))
+        #expect(FileProvider.isExcluded("\(home)/Documents/a.txt", by: prefixes) == false)
+    }
+
+    /// `~/Library` で弾くつもりが `~/LibraryNotes.md` まで落ちてはいけない。
+    @Test("名前が前方一致するだけのものは落とさない")
+    func doesNotExcludeSiblingsWithSharedPrefix() {
+        let prefixes = FileProvider.expanded(["~/Library"])
+        let home = NSHomeDirectory()
+
+        #expect(FileProvider.isExcluded("\(home)/LibraryNotes.md", by: prefixes) == false)
+        #expect(FileProvider.isExcluded("\(home)/Library", by: prefixes) == false)
+    }
+
+    @Test("除外指定が空なら何も落とさない")
+    func emptyExcludeKeepsEverything() {
+        #expect(FileProvider.expanded([]).isEmpty)
+        #expect(FileProvider.isExcluded("/anywhere", by: []) == false)
+    }
 
     /// Spotlight に fuzzy は無い。部分列をワイルドカードに開いて粗く集める。
     @Test("部分列をワイルドカードに開く")

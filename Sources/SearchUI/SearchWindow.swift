@@ -18,7 +18,7 @@ private final class KeyablePanel: NSPanel {
 /// 寸法は `Metrics` に集めてある。**入力欄の左にアイコンを置くのは装飾ではなく、
 /// 入力した文字と候補のタイトルの左端を揃えるため。**
 @MainActor
-final class SearchWindow: NSObject, NSTextFieldDelegate {
+final class SearchWindow: NSObject, NSTextFieldDelegate, NSWindowDelegate {
 
     /// 入力が変わった。
     var onQueryChange: ((String) -> Void)?
@@ -51,7 +51,6 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
     /// 食い違って入力欄の上端が切れる。**
     private var separatorHeight: NSLayoutConstraint?
     private var tableHeight: NSLayoutConstraint?
-    private var resignObserver: NSObjectProtocol?
 
     init(width: CGFloat, maxVisibleRows: Int, log: Log = .shared) {
         self.maxVisibleRows = max(1, maxVisibleRows)
@@ -66,17 +65,30 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
         build()
     }
 
-    isolated deinit {
-        if let resignObserver {
-            NotificationCenter.default.removeObserver(resignObserver)
-        }
-    }
-
     // MARK: - 状態
 
     var isVisible: Bool { panel.isVisible }
     var query: String { input.stringValue }
     var selected: Candidate? { table.selected }
+    /// 今 1 件でも候補が出ているか。状態行だけの場合は false。
+    var hasCandidates: Bool { table.selected != nil }
+    /// 表に出ている行数。状態行を含む。テストから見るために持つ。
+    var rowCount: Int { table.count }
+    /// 入力欄の選択範囲。テストから見るために持つ。
+    var selectedInputRange: NSRange? {
+        (panel.fieldEditor(false, for: input) as? NSTextView)?.selectedRange()
+    }
+
+    /// 通知の宛先を切る。**入れ替えで捨てる窓に対して呼ぶ。**
+    ///
+    /// 捨てる窓が `onResignKey` を投げると、入れ替わったばかりの新しい窓が閉じる。
+    func detach() {
+        onQueryChange = nil
+        onSubmit = nil
+        onCancel = nil
+        onResignKey = nil
+        panel.delegate = nil
+    }
 
     // MARK: - 表示
 
@@ -93,7 +105,7 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
             ]
         )
         symbolView.image = Metrics.symbol(named: symbolName)
-        table.setCandidates(candidates)
+        table.setCandidates(candidates, matching: "")
         layout()
 
         panel.makeKeyAndOrderFront(nil)
@@ -102,18 +114,28 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
 
     func dismiss() {
         panel.orderOut(nil)
-        table.setCandidates([])
+        table.setCandidates([], matching: "")
         input.stringValue = ""
     }
 
-    func setCandidates(_ candidates: [Candidate]) {
-        table.setCandidates(candidates)
+    /// - Parameters:
+    ///   - query: マッチした文字を太らせるために照合する入力。キーワードを外した
+    ///     ぶんを渡す（`f report` なら `report`）。
+    ///   - status: 候補が無いときに 1 行だけ出す文言。
+    func setCandidates(_ candidates: [Candidate], matching query: String, status: String? = nil) {
+        table.setCandidates(candidates, matching: query, status: status)
         layout()
     }
 
     /// 入力欄に文字を流し込む。`--show-search` での動作確認に使う。
+    ///
+    /// **カーソルは末尾に置く。** `stringValue` を入れただけだと field editor が
+    /// 全選択の状態になり、続けて打った 1 文字で消える。
     func setQuery(_ text: String) {
         input.stringValue = text
+        if let editor = panel.fieldEditor(false, for: input) as? NSTextView {
+            editor.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
+        }
     }
 
     // MARK: - 配置
@@ -126,7 +148,10 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
 
         // **画面から出ないように行数を抑える。** `max_results` は 50 まで許して
         // いるので、そのまま使うと候補が画面の下へ突き抜けて選べない。
-        let rows = min(table.count, maxVisibleRows, area.map(Self.rowsThatFit) ?? maxVisibleRows)
+        // **メソッド参照ではなくクロージャで渡す。** `@MainActor` のメソッドを
+        // 関数値として渡せるのは Swift 6.1 以降で、6.0 では弾かれる。
+        let rows = min(
+            table.count, maxVisibleRows, area.map { Self.rowsThatFit(in: $0) } ?? maxVisibleRows)
 
         let listHeight = rows > 0 ? CGFloat(rows) * Metrics.rowHeight : 0
         let separatorSpace = rows > 0 ? Metrics.separatorThickness : 0
@@ -261,14 +286,22 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
         panel.contentView = container
 
         // 他のアプリへ移ったら閉じる（requirements.md 3.2）。
-        resignObserver = NotificationCenter.default.addObserver(
-            forName: NSWindow.didResignKeyNotification, object: panel, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, self.panel.isVisible else { return }
-                self.onResignKey?()
-            }
-        }
+        //
+        // **NotificationCenter ではなく delegate で受ける。** `NSWindow.delegate` は
+        // 弱参照なので、外し忘れて登録が残ることがない（block observer は自分で
+        // 外す必要があり、`@MainActor` のクラスの `deinit` からは外せない）。
+        panel.delegate = self
+    }
+
+    // MARK: - NSWindowDelegate
+
+    /// 他のアプリへ移った。
+    ///
+    /// **自分で閉じたときは無視する。** `orderOut` でも key を手放すので、
+    /// 表示中かどうかで区別しないと `dismiss` が二重に走る。
+    func windowDidResignKey(_ notification: Notification) {
+        guard panel.isVisible else { return }
+        onResignKey?()
     }
 
     // MARK: - キー操作
@@ -277,27 +310,48 @@ final class SearchWindow: NSObject, NSTextFieldDelegate {
         onQueryChange?(input.stringValue)
     }
 
-    /// `Esc` / `↑` / `↓` / `Enter` を捕まえる。
+    /// 一覧を動かすキーを捕まえる。
     ///
     /// これらは field editor が先に受け取るため、`NSPanel` の `keyDown` では届かない。
+    ///
+    /// | キー | 届く selector | 動き |
+    /// |---|---|---|
+    /// | `Esc` | `cancelOperation` | 閉じる |
+    /// | `Enter` | `insertNewline` | 実行 |
+    /// | `↑` `↓` / `^P` `^N` | `moveUp` `moveDown` | 1 つ動かす |
+    /// | `PageUp` `PageDown` | `scrollPageUp` `scrollPageDown` | 1 画面動かす |
+    /// | `Home` `End` | `scrollTo…OfDocument` | 端へ飛ぶ |
+    /// | `⌘↑` `⌘↓` | `moveTo…OfDocument` | 端へ飛ぶ |
+    ///
+    /// `^P` / `^N` は AppKit の既定のキーバインドが `moveUp:` / `moveDown:` へ
+    /// 変換するので、ここで個別に見る必要はない。
+    ///
+    /// **捕まえたものだけ true を返す。** それ以外を true にすると文字が打てなくなる。
     func control(
         _ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector
     ) -> Bool {
         switch commandSelector {
         case #selector(NSResponder.cancelOperation(_:)):
             onCancel?()
-            return true
         case #selector(NSResponder.insertNewline(_:)):
             onSubmit?()
-            return true
         case #selector(NSResponder.moveDown(_:)):
             table.moveSelection(by: 1)
-            return true
         case #selector(NSResponder.moveUp(_:)):
             table.moveSelection(by: -1)
-            return true
+        case #selector(NSResponder.scrollPageDown(_:)):
+            table.moveSelectionByPage(1)
+        case #selector(NSResponder.scrollPageUp(_:)):
+            table.moveSelectionByPage(-1)
+        case #selector(NSResponder.moveToBeginningOfDocument(_:)),
+            #selector(NSResponder.scrollToBeginningOfDocument(_:)):
+            table.moveSelectionToEdge(.first)
+        case #selector(NSResponder.moveToEndOfDocument(_:)),
+            #selector(NSResponder.scrollToEndOfDocument(_:)):
+            table.moveSelectionToEdge(.last)
         default:
             return false
         }
+        return true
     }
 }

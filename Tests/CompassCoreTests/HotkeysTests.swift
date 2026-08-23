@@ -75,9 +75,9 @@ struct HotkeysTests {
 
     @Test("trigger を解釈できなければエラー")
     func rejectsUnknownTrigger() throws {
-        let issues = try #require(throws: ConfigIssues.self) {
+        let issues = try #require(thrownIssues {
             try Hotkeys.parse(#"trigger = "hyper""#)
-        }
+        })
         #expect(issues.items[0].file == .hotkeys)
         #expect(issues.items[0].detail.contains("trigger"))
     }
@@ -85,9 +85,9 @@ struct HotkeysTests {
     /// shift だけだと通常のタイピングまでホットキー候補になり、大文字入力が奪われる。
     @Test("shift だけの trigger は受け付けない")
     func rejectsShiftOnlyTrigger() throws {
-        let issues = try #require(throws: ConfigIssues.self) {
+        let issues = try #require(thrownIssues {
             try Hotkeys.parse(#"trigger = "shift""#)
-        }
+        })
         #expect(issues.items[0].detail.contains("cmd"))
     }
 
@@ -108,7 +108,7 @@ struct HotkeysTests {
             [commands]
             v = "open -a Finder"
             """
-        let issues = try #require(throws: ConfigIssues.self) { try Hotkeys.parse(toml) }
+        let issues = try #require(thrownIssues { try Hotkeys.parse(toml) })
         #expect(issues.items.contains { $0.detail.contains("同じキー") })
     }
 
@@ -130,9 +130,9 @@ struct HotkeysTests {
 
     @Test("不明なキー名はエラー")
     func rejectsUnknownKeyName() throws {
-        let issues = try #require(throws: ConfigIssues.self) {
+        let issues = try #require(thrownIssues {
             try Hotkeys.parse(#"[commands]\#nfoo = "open -a Finder""#)
-        }
+        })
         #expect(issues.items[0].detail.contains("foo"))
     }
 
@@ -140,9 +140,9 @@ struct HotkeysTests {
     /// （requirements.md 3.3）。
     @Test("actions の値は組み込みアクション名のみ")
     func rejectsUnknownBuiltinAction() throws {
-        let issues = try #require(throws: ConfigIssues.self) {
+        let issues = try #require(thrownIssues {
             try Hotkeys.parse(#"[actions]\#nv = "paste""#)
-        }
+        })
         #expect(issues.items[0].detail.contains("search"))
         #expect(issues.items[0].detail.contains("clipboard"))
     }
@@ -165,7 +165,7 @@ struct HotkeysTests {
             """
         var expected: [String] = []
         for _ in 0..<5 {
-            let issues = try #require(throws: ConfigIssues.self) { try Hotkeys.parse(toml) }
+            let issues = try #require(thrownIssues { try Hotkeys.parse(toml) })
             let details = issues.items.map(\.detail)
             if expected.isEmpty {
                 expected = details

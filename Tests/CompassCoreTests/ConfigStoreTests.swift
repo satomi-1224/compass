@@ -214,4 +214,48 @@ struct ConfigStoreTests {
         #expect(store.startWatching())
         store.stopWatching()
     }
+
+    // MARK: - 不備の保持
+
+    /// **通知だけに頼らない。** bundle identifier が通知不可の状態になっていると
+    /// `requestAuthorization` は黙って失敗する。不可視の常駐でエラーに気づく手段が
+    /// 消えないよう、検索窓から読めるところに残す。
+    @Test("直近の不備を保持する")
+    func keepsLatestIssues() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try write("[actions]\nbogus = \"search\"", to: directory, as: .hotkeys)
+
+        let store = ConfigStore(directory: directory, reporter: Recorder())
+        store.load()
+
+        #expect(store.issues.count == 1)
+        #expect(store.issues[0].file == .hotkeys)
+        #expect(store.issues[0].detail.contains("bogus"))
+    }
+
+    @Test("直すと不備は消える")
+    func clearsIssuesWhenFixed() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try write("[actions]\nbogus = \"search\"", to: directory, as: .hotkeys)
+
+        let store = ConfigStore(directory: directory, reporter: Recorder())
+        store.load()
+        #expect(store.issues.isEmpty == false)
+
+        try write("[actions]\nspace = \"search\"", to: directory, as: .hotkeys)
+        store.load()
+        #expect(store.issues.isEmpty)
+    }
+
+    @Test("不備が無ければ空のまま")
+    func noIssuesWhenClean() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = ConfigStore(directory: directory, reporter: Recorder())
+        store.load()
+        #expect(store.issues.isEmpty)
+    }
 }

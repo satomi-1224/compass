@@ -28,7 +28,7 @@ public final class FileProvider {
 
     private let log: Log
     private var query: NSMetadataQuery?
-    private var observer: NSObjectProtocol?
+    private var observer: NotificationToken?
     /// クエリの世代。**`removeObserver` は既にキューへ載った通知を取り消せない**ため、
     /// これで古い通知を弾く。
     private var generation = 0
@@ -39,18 +39,16 @@ public final class FileProvider {
         self.log = log
     }
 
-    isolated deinit {
-        cancel()
-    }
-
     /// 探して、揃ったところで返す。
     ///
     /// - Parameters:
     ///   - scopes: 探索範囲。`~` から始まるパスは展開する。
+    ///   - exclude: この下にあるものは外す。`~` から始まるパスは展開する。
     ///   - limit: 返す最大件数。
     public func search(
         _ text: String,
         scopes: [String],
+        exclude: [String] = [],
         limit: Int,
         completion: @escaping @MainActor ([Candidate]) -> Void
     ) {
@@ -67,6 +65,7 @@ public final class FileProvider {
             return
         }
 
+        let excluded = Self.expanded(exclude)
         let query = NSMetadataQuery()
         // **部分列マッチをワイルドカードで表現する。** Spotlight に fuzzy は無いので
         // `dcm` を `*d*c*m*` に開いて粗く集め、並べ替えは FuzzyMatcher に任せる。
@@ -87,22 +86,26 @@ public final class FileProvider {
         // 通知ハンドラへ渡すと data race として弾かれる。self 経由で読む。
         self.query = query
 
-        observer = NotificationCenter.default.addObserver(
-            forName: .NSMetadataQueryDidFinishGathering, object: query, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                // 世代が違えば、これは止めたはずのクエリの通知。**ここで弾かないと、
-                // 走り始めたばかりの次のクエリを部分結果で確定させて止めてしまう。**
-                guard self.generation == generation, let running = self.query else { return }
+        observer = NotificationToken(
+            NotificationCenter.default.addObserver(
+                forName: .NSMetadataQueryDidFinishGathering, object: query, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    // 世代が違えば、これは止めたはずのクエリの通知。**ここで弾かないと、
+                    // 走り始めたばかりの次のクエリを部分結果で確定させて止めてしまう。**
+                    guard self.generation == generation, let running = self.query else {
+                        return
+                    }
 
-                let candidates = Self.candidates(
-                    from: running, matching: effective, limit: limit, log: self.log)
-                self.cancel()
-                self.warnIfIndexLooksDisabled(resultCount: candidates.count)
-                completion(candidates)
-            }
-        }
+                    let candidates = Self.candidates(
+                        from: running, matching: effective, excluding: excluded,
+                        limit: limit, log: self.log)
+                    self.cancel()
+                    self.warnIfIndexLooksDisabled(resultCount: candidates.count)
+                    completion(candidates)
+                }
+            })
 
         guard query.start() else {
             log.error("ファイル検索を開始できなかった: \(effective)")
@@ -116,10 +119,8 @@ public final class FileProvider {
         // キューに残っている通知を無効にするため、世代を進める。
         generation += 1
 
-        if let observer {
-            NotificationCenter.default.removeObserver(observer)
-            self.observer = nil
-        }
+        // **参照を捨てるだけ**で `NotificationToken` が登録を外す。
+        observer = nil
         if let query, query.isStarted {
             query.stop()
         }
@@ -165,8 +166,26 @@ public final class FileProvider {
 
     // MARK: - 変換
 
+    /// `~` を展開し、末尾の `/` を揃える。前方一致で使うため。
+    nonisolated static func expanded(_ paths: [String]) -> [String] {
+        paths.compactMap { path in
+            let expanded = (path as NSString).expandingTildeInPath
+            guard !expanded.isEmpty else { return nil }
+            return expanded.hasSuffix("/") ? expanded : expanded + "/"
+        }
+    }
+
+    /// 除外する場所の下にあるか。
+    ///
+    /// **末尾に `/` を足してから見る。** `~/Library` で弾くつもりが
+    /// `~/LibraryNotes.md` まで落ちてしまう。
+    nonisolated static func isExcluded(_ path: String, by prefixes: [String]) -> Bool {
+        prefixes.contains { path.hasPrefix($0) }
+    }
+
     private static func candidates(
-        from query: NSMetadataQuery, matching text: String, limit: Int, log: Log
+        from query: NSMetadataQuery, matching text: String, excluding: [String],
+        limit: Int, log: Log
     ) -> [Candidate] {
         query.disableUpdates()
 
@@ -179,6 +198,7 @@ public final class FileProvider {
             guard let item = query.result(at: index) as? NSMetadataItem,
                 let path = item.value(forAttribute: kMDItemPath as String) as? String
             else { continue }
+            guard !isExcluded(path, by: excluding) else { continue }
             found[path] = Candidate(
                 id: path,
                 title: (path as NSString).lastPathComponent,
@@ -197,5 +217,26 @@ public final class FileProvider {
 
         // Spotlight の並びは当てにできない。スコアで並べ直す。
         return FuzzyMatcher.filter(Array(found.values), query: text, limit: limit)
+    }
+}
+
+/// NotificationCenter の登録を持ち、**参照が切れたら必ず外す。**
+///
+/// 外し忘れると、クエリを止めたあとも登録だけが残って古い通知が届き続ける。
+///
+/// **持ち主の `deinit` では外せない。** `FileProvider` は `@MainActor` で、その
+/// `deinit` は nonisolated なので自分のプロパティに触れない。`isolated deinit` は
+/// **実行時に macOS 15.4 以降を要求する**ため、macOS 14 を最低要件にしている
+/// compass では使えない。actor に属さないこの型に持たせれば素の `deinit` で走る。
+private final class NotificationToken {
+
+    private let token: any NSObjectProtocol
+
+    init(_ token: any NSObjectProtocol) {
+        self.token = token
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(token)
     }
 }

@@ -114,6 +114,18 @@ public enum ActionRunner {
     ) {
         DispatchQueue.global(qos: .userInitiated).async {
             guard let output = capture(command, timeout: timeout, log: log) else { return }
+            // **何も出さないコマンドは、選ばれたのに何も起きなかったのと同じ。**
+            // 不可視の常駐なので、黙ると原因を追う手がかりが無い。
+            guard !output.isEmpty else {
+                // 通知そのものがログにも残るので、ここでは書かない。
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        Notifier.shared.report(
+                            title: "スニペットのコマンドが何も出力しなかった", body: command)
+                    }
+                }
+                return
+            }
             DispatchQueue.main.async {
                 paste(output, log: log)
             }

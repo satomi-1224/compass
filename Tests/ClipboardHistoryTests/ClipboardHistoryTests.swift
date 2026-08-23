@@ -68,6 +68,8 @@ struct ClipboardHistoryTests {
         let first = makeHistory(at: url)
         first.record("a")
         first.record("b")
+        // 書き込みはバックグラウンド。読み返す前に終わらせる。
+        first.waitForWrites()
 
         let second = makeHistory(at: url)
         #expect(second.items == ["b", "a"])
@@ -79,7 +81,9 @@ struct ClipboardHistoryTests {
         let url = makeStoreURL()
         defer { try? FileManager.default.removeItem(at: url) }
 
-        makeHistory(at: url).record("secret")
+        let history = makeHistory(at: url)
+        history.record("secret")
+        history.waitForWrites()
 
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         let permissions = try #require(attributes[.posixPermissions] as? NSNumber)
@@ -167,6 +171,7 @@ struct ClipboardHistoryTests {
         let history = makeHistory(at: url)
         history.record("a")
         history.clear()
+        history.waitForWrites()
 
         #expect(history.items.isEmpty)
         #expect(makeHistory(at: url).items.isEmpty)
@@ -196,5 +201,23 @@ struct TextSummaryTests {
     @Test("短ければそのまま")
     func keepsShortText() {
         #expect(TextSummary.line(of: "hello") == "hello")
+    }
+
+    /// **全長を走査しない。** クリップボード履歴には数 MB のテキストが入りうる。
+    /// 50 件ぶん畳もうとすると、履歴を開いた瞬間に窓が固まる。
+    @Test("巨大な入力でも一瞬で畳む")
+    func foldsHugeTextQuickly() {
+        let huge = String(repeating: "あ", count: 4_000_000)
+        let start = Date()
+        let summary = TextSummary.line(of: huge, limit: 120)
+        #expect(summary.count == 121)  // 120 文字 + 省略記号
+        #expect(Date().timeIntervalSince(start) < 0.5)
+    }
+
+    /// 切り出した先に中身が残っていても、省略したことは示す。
+    @Test("空白ばかりでも省略を示す")
+    func marksClippedWhitespace() {
+        let text = String(repeating: " ", count: 5_000) + "末尾"
+        #expect(TextSummary.line(of: text, limit: 10) == "…")
     }
 }

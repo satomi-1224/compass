@@ -1,5 +1,6 @@
 import Carbon.HIToolbox
 import CompassCore
+import Foundation
 
 /// トリガー + 単キーのグローバルホットキーを登録する。
 ///
@@ -15,9 +16,46 @@ public final class HotkeyEngine {
     /// 登録したキーが押された。
     public var onTrigger: (@MainActor (HotkeyBinding) -> Void)?
 
-    private struct Registration {
-        var binding: HotkeyBinding
-        var ref: EventHotKeyRef
+    /// Carbon への登録 1 つ。**参照が切れたら必ず解除する。**
+    ///
+    /// 解除し損ねると OS 側に登録が残り、そのキーは押しても誰も応えないまま
+    /// 他のアプリからも取れなくなる。
+    ///
+    /// **持ち主の `deinit` では外せない。** `HotkeyEngine` は `@MainActor` で、その
+    /// `deinit` は nonisolated なので自分のプロパティに触れない。`isolated deinit` は
+    /// **実行時に macOS 15.4 以降を要求する**ため、macOS 14 を最低要件にしている
+    /// compass では使えない。actor に属さないこの型に持たせれば素の `deinit` で走る。
+    private final class Registration {
+        let binding: HotkeyBinding
+        private let ref: EventHotKeyRef
+
+        init(binding: HotkeyBinding, ref: EventHotKeyRef) {
+            self.binding = binding
+            self.ref = ref
+        }
+
+        deinit {
+            let handle = CarbonHandle(ref)
+            onMainThread { UnregisterEventHotKey(handle.pointer) }
+        }
+    }
+
+    /// インストールした Carbon のイベントハンドラ。**参照が切れたら必ず外す。**
+    ///
+    /// 外さないまま `HotkeyEngine` が解放されると、ハンドラは解放済みの `self` を
+    /// 指したまま残る。登録も一緒に消えるので自分のイベントは届かなくなるが、
+    /// 何も残さないほうが安全側。
+    private final class InstalledHandler {
+        private let ref: EventHandlerRef
+
+        init(_ ref: EventHandlerRef) {
+            self.ref = ref
+        }
+
+        deinit {
+            let handle = CarbonHandle(ref)
+            onMainThread { RemoveEventHandler(handle.pointer) }
+        }
     }
 
     /// ホットキーを識別する 4 文字コード（`cmps`）。
@@ -30,18 +68,11 @@ public final class HotkeyEngine {
 
     private let log: Log
     private var registrations: [UInt32: Registration] = [:]
-    private var eventHandler: EventHandlerRef?
+    private var eventHandler: InstalledHandler?
     private var nextID: UInt32 = 1
 
     public init(log: Log = .shared) {
         self.log = log
-    }
-
-    isolated deinit {
-        unregisterAll()
-        if let eventHandler {
-            RemoveEventHandler(eventHandler)
-        }
     }
 
     /// 現在登録している数。
@@ -71,10 +102,8 @@ public final class HotkeyEngine {
         return failures
     }
 
+    /// 登録を全て解除する。**参照を捨てるだけ**で `Registration` が解除する。
     public func unregisterAll() {
-        for registration in registrations.values {
-            UnregisterEventHotKey(registration.ref)
-        }
         registrations.removeAll()
     }
 
@@ -124,19 +153,24 @@ public final class HotkeyEngine {
             eventClass: OSType(kEventClassKeyboard),
             eventKind: UInt32(kEventHotKeyPressed)
         )
-        // ハンドラは self より長生きしない（deinit で外す）ので unretained で渡す。
+        // **unretained で渡す。** ハンドラは `InstalledHandler` が持っていて、
+        // `HotkeyEngine` が解放されれば一緒に外れる。retain すると互いに参照し合って
+        // どちらも解放されない。
         let context = Unmanaged.passUnretained(self).toOpaque()
+        var ref: EventHandlerRef?
         let status = InstallEventHandler(
             GetApplicationEventTarget(),
             handleHotkeyEvent,
             1,
             &eventType,
             context,
-            &eventHandler
+            &ref
         )
-        if status != noErr {
+        guard status == noErr, let ref else {
             log.error("ホットキーのイベントハンドラを登録できなかった（status \(status)）")
+            return
         }
+        eventHandler = InstalledHandler(ref)
     }
 
     /// Carbon のコールバックから呼ばれる。
@@ -147,6 +181,29 @@ public final class HotkeyEngine {
         log.debug("ホットキー: \(registration.binding.key)")
         onTrigger?(registration.binding)
         return true
+    }
+}
+
+/// Carbon の登録ハンドルをメインスレッドへ渡すための包み。
+///
+/// `EventHotKeyRef` も `EventHandlerRef` も `OpaquePointer` の別名で Sendable ではない。
+/// ここで運ぶのは**渡した先で 1 度解除して捨てるだけ**の値で、共有も再利用も
+/// 起きないため送っても安全。
+private struct CarbonHandle: @unchecked Sendable {
+    let pointer: OpaquePointer
+
+    init(_ pointer: OpaquePointer) {
+        self.pointer = pointer
+    }
+}
+
+/// Carbon の API はメインスレッドから呼ぶ。**`deinit` がどのスレッドで走るかは
+/// 決まっていない**ので、必要なら渡し直す。
+private func onMainThread(_ body: @escaping @Sendable () -> Void) {
+    if Thread.isMainThread {
+        body()
+    } else {
+        DispatchQueue.main.async(execute: body)
     }
 }
 

@@ -62,19 +62,19 @@ struct SnippetDefinitionTests {
 
     @Test("body と body_command は同時に書けない")
     func rejectsBothBodies() throws {
-        let issues = try #require(throws: ConfigIssues.self) {
+        let issues = try #require(thrownIssues {
             try SnippetDefinition.parseAll(
                 #"[[snippets]]\#ntitle = "x"\#nbody = "a"\#nbody_command = "b""#)
-        }
+        })
         #expect(issues.items[0].file == .snippets)
         #expect(issues.items[0].detail.contains("同時"))
     }
 
     @Test("body も body_command も無ければエラー")
     func rejectsMissingBody() throws {
-        let issues = try #require(throws: ConfigIssues.self) {
+        let issues = try #require(thrownIssues {
             try SnippetDefinition.parseAll(#"[[snippets]]\#ntitle = "x""#)
-        }
+        })
         #expect(issues.items[0].detail.contains("body"))
     }
 

@@ -46,6 +46,11 @@ enum Metrics {
     static var inputFont: NSFont { .systemFont(ofSize: 22, weight: .regular) }
     /// 候補のタイトル。
     static var titleFont: NSFont { .systemFont(ofSize: 14, weight: .regular) }
+    /// 候補のタイトルのうち、入力に当たった文字。
+    ///
+    /// **同じサイズのまま太さだけ変える。** サイズを変えると 1 行の中で文字の
+    /// 高さが揃わず、字が踊って見える。
+    static var titleMatchFont: NSFont { .systemFont(ofSize: 14, weight: .bold) }
     /// 候補のサブタイトル。サイズ差と色差の両方で階層を作る。
     static var subtitleFont: NSFont { .systemFont(ofSize: 11, weight: .regular) }
     /// タイトルとサブタイトルの行間。

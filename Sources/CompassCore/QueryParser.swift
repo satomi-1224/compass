@@ -32,19 +32,30 @@ public enum QueryParser {
     }
 
     public static func parse(_ input: String, keywords: [Config.Keyword]) -> Parsed {
+        // **先頭の空白は落としてから見る。** 落とさないと先頭トークンが空文字になり、
+        // キーワードに当たらないだけでなく、アプリ検索の照合にも空白が混ざって
+        // 何も出なくなる。
+        let text = String(input.drop(while: \.isWhitespace))
+
         // 空文字も要素として残す。`"g "` を 2 要素にしてモード切替を成立させる。
-        let parts = input.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: false)
+        let parts = text.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: false)
         guard parts.count == 2, let keyword = keywords.first(where: { $0.prefix == parts[0] })
         else {
-            return Parsed(mode: .apps, query: input)
+            // **末尾の空白も落とす。** `"cal "` のまま照合すると、タイトルに空白が
+            // 無い候補が全て落ちて「打ち間違えていないのに 0 件」になる。
+            return Parsed(mode: .apps, query: Self.trimmed(text))
         }
 
-        let query = String(parts[1])
+        let query = Self.trimmed(parts[1])
         switch keyword.kind {
         case .file:
             return Parsed(mode: .files, query: query)
         case .web:
             return Parsed(mode: .web(keyword), query: query)
         }
+    }
+
+    private static func trimmed(_ text: some StringProtocol) -> String {
+        text.trimmingCharacters(in: .whitespaces)
     }
 }

@@ -81,4 +81,37 @@ struct QueryParserTests {
     func emptyInput() {
         #expect(QueryParser.parse("", keywords: keywords) == .init(mode: .apps, query: ""))
     }
+
+    // MARK: - 前後の空白
+
+    /// **打ち間違えていないのに 0 件になるのを防ぐ。** 末尾の空白を残したまま
+    /// 照合すると、タイトルに空白が無い候補（`Calendar` など）が全て落ちる。
+    @Test("末尾の空白はアプリ検索の照合から外す")
+    func trimsTrailingSpaceForApps() {
+        #expect(QueryParser.parse("cal ", keywords: keywords).query == "cal")
+        #expect(QueryParser.parse("cal   ", keywords: keywords).query == "cal")
+    }
+
+    /// 先頭に空白が入ると、先頭トークンが空文字になってキーワードにも当たらない。
+    @Test("先頭の空白は落としてから見る")
+    func trimsLeadingSpace() {
+        #expect(QueryParser.parse(" cal", keywords: keywords).query == "cal")
+
+        let parsed = QueryParser.parse("  g swift", keywords: keywords)
+        #expect(parsed.query == "swift")
+        #expect(parsed.mode != .apps)
+    }
+
+    /// キーワードと検索語の間を余分に空けても、検索語には混ぜない。
+    @Test("キーワードの後ろの余分な空白は落とす")
+    func trimsSpacesAfterKeyword() {
+        #expect(QueryParser.parse("g   swift", keywords: keywords).query == "swift")
+        #expect(QueryParser.parse("f  report  ", keywords: keywords).query == "report")
+    }
+
+    /// 空白だけの入力で全アプリが並ぶと、選べない一覧が出る。
+    @Test("空白だけの入力はクエリも空")
+    func blankInputIsEmpty() {
+        #expect(QueryParser.parse("   ", keywords: keywords).query == "")
+    }
 }

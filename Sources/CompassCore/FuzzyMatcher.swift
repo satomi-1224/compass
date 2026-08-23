@@ -18,11 +18,11 @@ public enum FuzzyMatcher {
     ///
     /// 大文字小文字は区別しない。`query` が空なら 0 点でマッチ扱いにする。
     public static func score(_ query: String, in text: String) -> Score? {
-        let needle = Array(query.lowercased())
+        let needle = folded(query)
         guard !needle.isEmpty else { return Score(value: 0, positions: []) }
 
         let characters = Array(text)
-        let lowered = Array(text.lowercased())
+        let lowered = folded(text)
         guard needle.count <= characters.count else { return nil }
 
         var positions: [Int] = []
@@ -59,6 +59,25 @@ public enum FuzzyMatcher {
         return Score(value: value, positions: positions)
     }
 
+    /// 候補 1 件に対するスコア。**title と aliases のうち最も良いものを採る。**
+    ///
+    /// 別名で当たった場合は title 側にマッチ位置が無いので、`positions` は
+    /// 空になる（呼び出し側はハイライトを出さない）。
+    public static func score(_ query: String, for candidate: Candidate) -> Score? {
+        var best = score(query, in: candidate.title)
+        for alias in candidate.aliases {
+            guard let other = score(query, in: alias) else { continue }
+            guard let current = best else {
+                best = Score(value: other.value, positions: [])
+                continue
+            }
+            if other.value > current.value {
+                best = Score(value: other.value, positions: [])
+            }
+        }
+        return best
+    }
+
     /// 候補を絞り込んで並べる。
     ///
     /// - Parameter limit: 返す最大件数。
@@ -69,7 +88,7 @@ public enum FuzzyMatcher {
         guard !query.isEmpty else { return Array(candidates.prefix(limit)) }
 
         let scored = candidates.compactMap { candidate -> (candidate: Candidate, score: Score)? in
-            guard let score = score(query, in: candidate.title) else { return nil }
+            guard let score = score(query, for: candidate) else { return nil }
             return (candidate, score)
         }
 
@@ -92,6 +111,48 @@ public enum FuzzyMatcher {
             }
             .prefix(limit)
             .map(\.candidate)
+    }
+
+    // MARK: - 照合用の畳み込み
+
+    /// 照合に使う形へ畳む。**1 文字は必ず 1 文字のまま。**
+    ///
+    /// 位置をそのままタイトルへ戻してハイライトに使うため、長さの変わる畳み方は
+    /// できない（`String.lowercased()` は "İ" を 2 文字にする）。
+    static func folded(_ text: String) -> [Character] {
+        text.map(folded)
+    }
+
+    /// 1 文字を照合用に畳む。
+    ///
+    /// - 大文字小文字は区別しない
+    /// - **全角の英数記号を半角に寄せる。** かな入力のまま打つと `ｃａｌ` になり、
+    ///   そのままでは 1 件も出ない
+    /// - **ひらがなをカタカナに寄せる。** 変換せずに確定した「かれんだー」で
+    ///   「カレンダー」へ届く
+    ///
+    /// 半角カタカナ（`ｶﾞ`）は畳まない。濁点が独立した 1 文字なので、寄せると
+    /// 文字数が変わってハイライトの位置がずれる。
+    static func folded(_ character: Character) -> Character {
+        var value = character
+        if character.unicodeScalars.count == 1, let scalar = character.unicodeScalars.first {
+            switch scalar.value {
+            case 0xFF01...0xFF5E:
+                // 全角の `！` 〜 `～`。半角とはちょうど 0xFEE0 ずれている。
+                if let ascii = UnicodeScalar(scalar.value - 0xFEE0) { value = Character(ascii) }
+            case 0x3000:
+                value = " "
+            case 0x3041...0x3096:
+                // ひらがな → カタカナ。こちらもちょうど 0x60 ずれている。
+                if let katakana = UnicodeScalar(scalar.value + 0x60) {
+                    return Character(katakana)
+                }
+            default:
+                break
+            }
+        }
+        let lowered = value.lowercased()
+        return lowered.count == 1 ? Character(lowered) : value
     }
 
     /// 単語の切れ目の直後か。

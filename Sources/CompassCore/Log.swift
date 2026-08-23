@@ -1,6 +1,9 @@
 import Foundation
 
-/// 標準出力に書くだけのログ。
+/// 標準エラーに書くだけのログ。
+///
+/// **標準出力は空けておく。** `--print-candidates` のように結果を出す入口があり、
+/// ログが混ざると機械的に読めなくなる。
 ///
 /// launchd から起動したときは home-manager モジュールが指定したファイルへ
 /// リダイレクトされる。前景で動かしたときは端末に出る。
@@ -48,11 +51,16 @@ public struct Log: Sendable {
 
     private func write(_ level: Level, _ message: String) {
         guard level != .off, level >= minimum else { return }
-        print("\(Self.timestamp()) [\(level.name)] \(message)")
-        // **毎回流す。** 端末以外へ繋がると stdout はフルバッファになり、
-        // 数 KB 溜まるまで 1 行も見えない（launchd 経由のログファイルがこれに当たる。
-        // 実際に空のログを見て気づいた）。ログの頻度は低いのでコストは問題にならない。
-        fflush(stdout)
+        // **標準エラーへ出す。** `--print-candidates` の結果（標準出力）に混ざると
+        // 機械的に読めなくなる。実際、ファイル検索が 0 件のときの警告が候補一覧の
+        // 中に紛れていた。launchd から起動したときは home-manager モジュールが
+        // 標準出力と標準エラーの両方を同じログファイルへ向けるので、見え方は変わらない。
+        //
+        // **毎回流す。** 端末以外へ繋がるとフルバッファになり、数 KB 溜まるまで
+        // 1 行も見えない（launchd 経由のログファイルがこれに当たる。実際に空の
+        // ログを見て気づいた）。ログの頻度は低いのでコストは問題にならない。
+        fputs("\(Self.timestamp()) [\(level.name)] \(message)\n", stderr)
+        fflush(stderr)
     }
 
     /// `DateFormatter` は Sendable でないため共有せず、その場で作る。

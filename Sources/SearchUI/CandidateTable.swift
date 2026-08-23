@@ -5,6 +5,10 @@ import CompassCore
 ///
 /// **フォーカスを受け取らない**（`refusesFirstResponder`）。選択は入力欄に置いた
 /// まま矢印キーで動かす。表がフォーカスを奪うと文字が打てなくなる。
+///
+/// 候補が 1 件も無いときは、状態を 1 行だけ出す（「探しています…」「一致するものが
+/// ない」）。**この行は選べない。** 窓が入力欄だけに縮むと、絞り込めていないのか
+/// 探している最中なのかが区別できない。
 @MainActor
 final class CandidateTable: NSView {
 
@@ -16,8 +20,13 @@ final class CandidateTable: NSView {
     private let tableView = NSTableView()
     private let scrollView = NSScrollView()
     private var candidates: [Candidate] = []
+    /// 候補と照らし合わせる入力。マッチした文字を太らせるのに使う。
+    private var query = ""
+    /// 候補が無いときに 1 行だけ出す文言。
+    private var status: String?
 
-    var count: Int { candidates.count }
+    /// 表に出す行数。**候補が無いときの状態行を含む。**
+    var count: Int { candidates.isEmpty ? (status == nil ? 0 : 1) : candidates.count }
 
     var selected: Candidate? {
         let row = tableView.selectedRow
@@ -37,8 +46,14 @@ final class CandidateTable: NSView {
 
     // MARK: - 候補の差し替え
 
-    func setCandidates(_ newValue: [Candidate]) {
+    /// - Parameters:
+    ///   - query: マッチした文字を太らせるために照合する入力。キーワードを外した
+    ///     ぶんを渡す（`f report` なら `report`）。
+    ///   - status: 候補が無いときに出す文言。nil なら何も出さない。
+    func setCandidates(_ newValue: [Candidate], matching query: String, status: String? = nil) {
         candidates = newValue
+        self.query = query
+        self.status = status
         tableView.reloadData()
         guard !newValue.isEmpty else { return }
         // 常に先頭を選ぶ。前回の選択位置を引き継ぐと、絞り込むたびに
@@ -48,10 +63,32 @@ final class CandidateTable: NSView {
         refreshSelectionAppearance()
     }
 
+    /// 選択を 1 つずつ動かす。**端で止める。**
     func moveSelection(by delta: Int) {
         guard !candidates.isEmpty else { return }
-        // **端で止める。** 巻き戻すと押し続けたときの行き先が読めない。
-        let next = min(max(tableView.selectedRow + delta, 0), candidates.count - 1)
+        // 巻き戻すと押し続けたときの行き先が読めない。
+        select(tableView.selectedRow + delta)
+    }
+
+    /// 先頭・末尾へ飛ぶ。`Cmd+↑` / `Cmd+↓` と `Home` / `End`。
+    func moveSelectionToEdge(_ edge: Edge) {
+        guard !candidates.isEmpty else { return }
+        select(edge == .first ? 0 : candidates.count - 1)
+    }
+
+    enum Edge { case first, last }
+
+    /// 見えている行数ぶん飛ぶ。`PageUp` / `PageDown`。
+    ///
+    /// **1 行ぶん重ねる。** 飛んだ先が前の画面と地続きだと分かるようにする。
+    func moveSelectionByPage(_ direction: Int) {
+        guard !candidates.isEmpty else { return }
+        let visible = max(1, Int(scrollView.contentView.bounds.height / Metrics.rowHeight) - 1)
+        select(tableView.selectedRow + direction * visible)
+    }
+
+    private func select(_ row: Int) {
+        let next = min(max(row, 0), candidates.count - 1)
         tableView.selectRowIndexes([next], byExtendingSelection: false)
         tableView.scrollRowToVisible(next)
         refreshSelectionAppearance()
@@ -107,6 +144,8 @@ final class CandidateTable: NSView {
     }
 
     @objc private func handleDoubleClick() {
+        // 状態行はダブルクリックしても何も起きない。
+        guard selected != nil else { return }
         onActivate?()
     }
 }
@@ -115,19 +154,29 @@ final class CandidateTable: NSView {
 
 extension CandidateTable: NSTableViewDataSource, NSTableViewDelegate {
 
-    func numberOfRows(in tableView: NSTableView) -> Int { candidates.count }
+    func numberOfRows(in tableView: NSTableView) -> Int { count }
 
     func tableView(
         _ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int
     ) -> NSView? {
-        guard candidates.indices.contains(row) else { return nil }
         let identifier = NSUserInterfaceItemIdentifier("row")
         let view =
             tableView.makeView(withIdentifier: identifier, owner: self) as? CandidateRowView
             ?? CandidateRowView()
         view.identifier = identifier
-        view.configure(with: candidates[row], selected: tableView.selectedRow == row)
+
+        guard candidates.indices.contains(row) else {
+            view.configure(status: status ?? "")
+            return view
+        }
+        view.configure(
+            with: candidates[row], matching: query, selected: tableView.selectedRow == row)
         return view
+    }
+
+    /// 状態行は選べない。選べてしまうと `Enter` の行き先が無いのに反応する。
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+        candidates.indices.contains(row)
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
@@ -175,6 +224,11 @@ private final class CandidateRowView: NSTableCellView {
     private let subtitleLabel = NSTextField(labelWithString: "")
     /// アプリのアイコンは色を変えない。シンボルだけ選択に合わせて塗り替える。
     private var usesSymbol = false
+    /// 状態行は選択の色分けをしない。
+    private var isStatus = false
+    /// 現在のタイトルとマッチ位置。選択が変わるたびに組み直すために持つ。
+    private var title = ""
+    private var matched: [Int] = []
 
     init() {
         super.init(frame: .zero)
@@ -225,8 +279,13 @@ private final class CandidateRowView: NSTableCellView {
         fatalError("Interface Builder からは使わない")
     }
 
-    func configure(with candidate: Candidate, selected: Bool) {
-        titleLabel.stringValue = candidate.title
+    func configure(with candidate: Candidate, matching query: String, selected: Bool) {
+        isStatus = false
+        title = candidate.title
+        // **別名で当たった場合は位置が取れない。** その場合は太らせない
+        // （`sys` で「システム設定」が出たときに、無関係な字が太るのを避ける）。
+        matched = FuzzyMatcher.score(query, in: candidate.title)?.positions ?? []
+
         subtitleLabel.stringValue = candidate.subtitle ?? ""
         subtitleLabel.isHidden = candidate.subtitle == nil
 
@@ -243,9 +302,26 @@ private final class CandidateRowView: NSTableCellView {
         setSelected(selected)
     }
 
+    /// 候補が無いときの 1 行。**選択の色は付けない。**
+    func configure(status: String) {
+        isStatus = true
+        title = status
+        matched = []
+        subtitleLabel.stringValue = ""
+        subtitleLabel.isHidden = true
+        iconView.image = nil
+        usesSymbol = false
+        setSelected(false)
+    }
+
     /// 選択されると背景が濃くなる。文字とシンボルの色を合わせないと読めない。
     func setSelected(_ selected: Bool) {
-        titleLabel.textColor = selected ? .alternateSelectedControlTextColor : .labelColor
+        let color: NSColor =
+            isStatus
+            ? .tertiaryLabelColor
+            : (selected ? .alternateSelectedControlTextColor : .labelColor)
+        titleLabel.attributedStringValue = Self.attributedTitle(
+            title, matched: matched, color: color)
         subtitleLabel.textColor =
             selected
             ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.8)
@@ -254,5 +330,34 @@ private final class CandidateRowView: NSTableCellView {
             iconView.contentTintColor =
                 selected ? .alternateSelectedControlTextColor : .secondaryLabelColor
         }
+    }
+
+    /// マッチした文字だけ太らせる。
+    ///
+    /// **色は変えない。** 選択行は濃い地の上に載るので、色差だと沈むか浮きすぎる。
+    /// 太さの差なら地の色に関係なく読み取れる。
+    private static func attributedTitle(
+        _ title: String, matched: [Int], color: NSColor
+    ) -> NSAttributedString {
+        let result = NSMutableAttributedString(
+            string: title,
+            attributes: [.font: Metrics.titleFont, .foregroundColor: color]
+        )
+        guard !matched.isEmpty else { return result }
+
+        // `matched` は Character 単位の位置。NSAttributedString は UTF-16 単位なので
+        // **数え直す。** 絵文字や結合文字を含む名前でずれる。
+        let positions = Set(matched)
+        var offset = 0
+        for (index, character) in title.enumerated() {
+            let length = character.utf16.count
+            if positions.contains(index) {
+                result.addAttribute(
+                    .font, value: Metrics.titleMatchFont,
+                    range: NSRange(location: offset, length: length))
+            }
+            offset += length
+        }
+        return result
     }
 }

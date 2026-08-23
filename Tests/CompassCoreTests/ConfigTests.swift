@@ -111,9 +111,9 @@ struct ConfigTests {
     /// 丸めると「設定したのに効いていない」状態になり、正常時に黙る設計では気づけない。
     @Test("範囲外の値は丸めずにエラーにする")
     func rejectsOutOfRange() throws {
-        let issues = try #require(throws: ConfigIssues.self) {
+        let issues = try #require(thrownIssues {
             try Config.parse("[appearance]\nmax_results = 0")
-        }
+        })
         #expect(issues.items.count == 1)
         #expect(issues.items[0].file == .config)
         #expect(issues.items[0].detail.contains("max_results"))
@@ -121,9 +121,9 @@ struct ConfigTests {
 
     @Test("不明な値は候補を添えて報告する")
     func reportsUnknownValueWithCandidates() throws {
-        let issues = try #require(throws: ConfigIssues.self) {
+        let issues = try #require(thrownIssues {
             try Config.parse(#"[search]\#nmatching = "prefix""#)
-        }
+        })
         #expect(issues.items[0].detail.contains("fuzzy"))
     }
 
@@ -135,7 +135,7 @@ struct ConfigTests {
             width       = 10
             max_results = 999
             """
-        let issues = try #require(throws: ConfigIssues.self) { try Config.parse(toml) }
+        let issues = try #require(thrownIssues { try Config.parse(toml) })
         #expect(issues.items.count == 2)
     }
 
@@ -149,9 +149,9 @@ struct ConfigTests {
     /// 通知しか手がかりが無いので、値が空文字のときは位置を伝える必要がある。
     @Test("空文字の探索範囲は位置を報告する")
     func reportsBlankScopePosition() throws {
-        let issues = try #require(throws: ConfigIssues.self) {
+        let issues = try #require(thrownIssues {
             try Config.parse(#"[search.files]\#nscopes = ["~", ""]"#)
-        }
+        })
         #expect(issues.items[0].detail.contains("2 番目"))
     }
 
@@ -170,12 +170,12 @@ struct ConfigTests {
 
     @Test("web には {query} を含む url が必要")
     func webKeywordRequiresURLTemplate() throws {
-        let missing = try #require(throws: ConfigIssues.self) {
+        let missing = try #require(thrownIssues {
             try Config.parse(#"[[search.keywords]]\#nprefix = "g"\#nkind = "web""#)
-        }
+        })
         #expect(missing.items[0].detail.contains("url"))
 
-        let noPlaceholder = try #require(throws: ConfigIssues.self) {
+        let noPlaceholder = try #require(thrownIssues {
             try Config.parse(
                 #"""
                 [[search.keywords]]
@@ -183,7 +183,7 @@ struct ConfigTests {
                 kind   = "web"
                 url    = "https://example.com/search"
                 """#)
-        }
+        })
         #expect(noPlaceholder.items[0].detail.contains("{query}"))
     }
 
@@ -212,7 +212,7 @@ struct ConfigTests {
     /// 黙って無視すると、書いたつもりの url が効かない状態に気づけない。
     @Test("file キーワードに url を書いたらエラー")
     func rejectsURLOnFileKeyword() throws {
-        let issues = try #require(throws: ConfigIssues.self) {
+        let issues = try #require(thrownIssues {
             try Config.parse(
                 #"""
                 [[search.keywords]]
@@ -220,8 +220,62 @@ struct ConfigTests {
                 kind   = "file"
                 url    = "https://example.com/?q={query}"
                 """#)
-        }
+        })
         #expect(issues.items[0].detail.contains("url"))
+    }
+
+    /// 日本語で検索すると `%E6%A4%9C%E7%B4%A2` が並んで、どこへ行くのか読めなくなる。
+    @Test("一覧に出す URL は percent encode しない")
+    func displayURLKeepsRawQuery() {
+        let keyword = Config.Keyword(
+            prefix: "g", kind: .web, url: "https://example.com/?q={query}")
+
+        #expect(keyword.displayURL(for: "検索語") == "https://example.com/?q=検索語")
+        // 実際に開くほうは今まで通りエスケープする。
+        #expect(
+            keyword.resolvedURL(for: "検索語")?.absoluteString
+                == "https://example.com/?q=%E6%A4%9C%E7%B4%A2%E8%AA%9E")
+        // ASCII だけなら両者は一致する。
+        #expect(keyword.displayURL(for: "swift") == "https://example.com/?q=swift")
+    }
+
+    @Test("file キーワードには出す URL が無い")
+    func fileKeywordHasNoDisplayURL() {
+        #expect(Config.Keyword(prefix: "f", kind: .file).displayURL(for: "x") == nil)
+    }
+
+    // MARK: - 除外
+
+    /// `~/Library` には数万件の支援ファイルがあり、探しているものを押しのける。
+    @Test("除外する場所は既定で ~/Library")
+    func excludesLibraryByDefault() {
+        #expect(Config().search.files.exclude == ["~/Library"])
+    }
+
+    @Test("除外する場所を書き換えられる")
+    func readsExclude() throws {
+        let config = try Config.parse(
+            #"""
+            [search.files]
+            exclude = ["~/Library", "~/.Trash"]
+            """#)
+        #expect(config.search.files.exclude == ["~/Library", "~/.Trash"])
+    }
+
+    /// 空にすれば元に戻せる。**「書いたのに効かない」を作らない。**
+    @Test("除外を空にできる")
+    func allowsEmptyExclude() throws {
+        let config = try Config.parse("[search.files]\nexclude = []")
+        #expect(config.search.files.exclude.isEmpty)
+    }
+
+    /// 値を出しても空文字では何も見えないので、位置を伝える。
+    @Test("空文字の除外指定は位置を報告する")
+    func reportsBlankExcludePosition() throws {
+        let issues = try #require(thrownIssues {
+            try Config.parse(#"[search.files]\#nexclude = ["~/Library", ""]"#)
+        })
+        #expect(issues.items[0].detail.contains("2 番目"))
     }
 
     @Test("既定のキーワードは file と web が揃っている")

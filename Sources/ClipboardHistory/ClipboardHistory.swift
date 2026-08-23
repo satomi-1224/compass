@@ -26,7 +26,7 @@ public final class ClipboardHistory {
     private let settings: @MainActor () -> Config.Clipboard
     private let storeURL: URL
     private let log: Log
-    private var timer: Timer?
+    private var poller: ManagedSource?
     private var lastChangeCount: Int
 
     public init(
@@ -43,10 +43,6 @@ public final class ClipboardHistory {
         load()
     }
 
-    isolated deinit {
-        stop()
-    }
-
     /// `~/Library/Application Support/compass/clipboard.json`
     public nonisolated static var defaultStoreURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -54,7 +50,7 @@ public final class ClipboardHistory {
             .appendingPathComponent("clipboard.json")
     }
 
-    public var isRunning: Bool { timer != nil }
+    public var isRunning: Bool { poller != nil }
 
     // MARK: - 監視
 
@@ -69,21 +65,31 @@ public final class ClipboardHistory {
         }
 
         // `NSPasteboard` に変更通知は無い。ポーリングしかない（requirements.md 3.4）。
-        let timer = Timer.scheduledTimer(
-            withTimeInterval: configuration.pollInterval, repeats: true
-        ) { [weak self] _ in
+        //
+        // **`Timer` は使わない。** `scheduledTimer` は run loop の `.default` モードに
+        // だけ載るため、メニューを開いている間やウィンドウをドラッグしている間
+        // （`.eventTracking`）は止まる。その隙に 2 回コピーすると 1 回目を取りこぼす。
+        // メインキューの dispatch timer はモードに関係なく回る。
+        let interval = configuration.pollInterval
+        let source = DispatchSource.makeTimerSource(queue: .main)
+        source.schedule(
+            deadline: .now() + interval,
+            repeating: interval,
+            // 厳密な間隔は要らない。まとめて起こしてもらって消費電力を抑える。
+            leeway: .milliseconds(Int(interval * 250))
+        )
+        source.setEventHandler { [weak self] in
             MainActor.assumeIsolated { self?.poll() }
         }
-        // 厳密な間隔は要らない。まとめて起こしてもらって消費電力を抑える。
-        timer.tolerance = configuration.pollInterval / 4
-        self.timer = timer
+        source.resume()
+        poller = ManagedSource(source)
 
-        log.debug("クリップボード監視を開始: \(configuration.pollInterval) 秒間隔")
+        log.debug("クリップボード監視を開始: \(interval) 秒間隔")
     }
 
+    /// 監視を止める。**参照を捨てるだけ**で `ManagedSource` が cancel する。
     public func stop() {
-        timer?.invalidate()
-        timer = nil
+        poller = nil
     }
 
     private func poll() {
@@ -137,16 +143,38 @@ public final class ClipboardHistory {
 
     // MARK: - 永続化
 
+    /// 書き込みを直列に流すキュー。
+    ///
+    /// **メインスレッドで書かない。** コピーのたびに履歴を丸ごと JSON へ直して
+    /// 書き直すので、大きなテキストをコピーすると入力がその分だけ止まる。
+    /// 直列にしておけば、続けてコピーしても書き込み順が入れ替わらない。
+    private nonisolated static let writeQueue = DispatchQueue(
+        label: "org.compass.clipboard.write", qos: .utility)
+
     private func save() {
-        let directory = storeURL.deletingLastPathComponent()
+        let snapshot = items
+        let url = storeURL
+        let log = self.log
+        Self.writeQueue.async {
+            Self.write(snapshot, to: url, log: log)
+        }
+    }
+
+    /// 書き込みが終わるまで待つ。**テストから読み返す前に使う。**
+    func waitForWrites() {
+        Self.writeQueue.sync {}
+    }
+
+    private nonisolated static func write(_ items: [String], to url: URL, log: Log) {
+        let directory = url.deletingLastPathComponent()
         do {
             try FileManager.default.createDirectory(
                 at: directory, withIntermediateDirectories: true)
             let data = try JSONEncoder().encode(items)
-            try data.write(to: storeURL, options: .atomic)
+            try data.write(to: url, options: .atomic)
             // **他のユーザーから読めないようにする。** 履歴は機密を含みうる。
             try FileManager.default.setAttributes(
-                [.posixPermissions: 0o600], ofItemAtPath: storeURL.path)
+                [.posixPermissions: 0o600], ofItemAtPath: url.path)
         } catch {
             log.error("クリップボード履歴を保存できなかった: \(error.localizedDescription)")
         }

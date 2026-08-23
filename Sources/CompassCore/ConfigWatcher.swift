@@ -28,9 +28,14 @@ public final class ConfigWatcher {
     private let debounce: TimeInterval
     private let log: Log
 
-    private var directorySource: DispatchSourceFileSystemObject?
-    private var fileSources: [String: DispatchSourceFileSystemObject] = [:]
-    private var parentSource: DispatchSourceFileSystemObject?
+    // 掴んだ `O_EVTONLY` の fd は cancel handler が閉じる。`ManagedSource` に
+    // 入れておくと、参照を捨てた時点で必ず cancel されるので、`stop()` を
+    // 呼び忘れても fd がプロセスの寿命まで残らない。
+    private var directorySource: ManagedSource?
+    private var fileSources: [String: ManagedSource] = [:]
+    private var parentSource: ManagedSource?
+    /// debounce 待ちの通知。**self を強く捕まえる**ので、待っている間は
+    /// ConfigWatcher が解放されない。片付けの対象にしなくてよい。
     private var pending: DispatchWorkItem?
 
     /// - Parameter debounce: 保存ソフトは 1 回の保存で複数回書き込む。まとめてから通知する。
@@ -45,15 +50,6 @@ public final class ConfigWatcher {
         self.fileNames = fileNames
         self.debounce = debounce
         self.log = log
-    }
-
-    /// 掴んだ `O_EVTONLY` の fd は cancel handler が閉じる。片付けないと
-    /// プロセスの寿命まで残るため、`stop()` を呼び忘れても確実に閉じる。
-    ///
-    /// `isolated deinit`（Swift 6.1+）で MainActor 上で走らせている。素の `deinit` は
-    /// nonisolated で、non-Sendable な `DispatchSource` を触れない。
-    isolated deinit {
-        stop()
     }
 
     public var isWatching: Bool {
@@ -88,14 +84,12 @@ public final class ConfigWatcher {
         return isWatching
     }
 
+    /// 監視を止める。**参照を捨てるだけ**で `ManagedSource` が cancel する。
     public func stop() {
         pending?.cancel()
         pending = nil
-        parentSource?.cancel()
         parentSource = nil
-        directorySource?.cancel()
         directorySource = nil
-        for source in fileSources.values { source.cancel() }
         fileSources.removeAll()
     }
 
@@ -139,16 +133,13 @@ public final class ConfigWatcher {
     }
 
     private func rewatchFile(_ name: String) {
-        fileSources[name]?.cancel()
         fileSources[name] = nil
         watchFile(name)
     }
 
     /// 監視を全て張り直す。ディレクトリが差し替えられたときに使う。
     private func rewatchAll() {
-        directorySource?.cancel()
         directorySource = nil
-        for source in fileSources.values { source.cancel() }
         fileSources.removeAll()
 
         watchDirectory()
@@ -174,7 +165,6 @@ public final class ConfigWatcher {
     /// 親ディレクトリの監視を、必要な状態に合わせる。
     private func syncParentWatch() {
         guard needsParentWatch else {
-            parentSource?.cancel()
             parentSource = nil
             return
         }
@@ -193,7 +183,7 @@ public final class ConfigWatcher {
         for path: String,
         mask: DispatchSource.FileSystemEvent,
         handler: @escaping @MainActor (DispatchSource.FileSystemEvent) -> Void
-    ) -> DispatchSourceFileSystemObject? {
+    ) -> ManagedSource? {
         let descriptor = open(path, O_EVTONLY)
         guard descriptor >= 0 else { return nil }
 
@@ -208,7 +198,7 @@ public final class ConfigWatcher {
             close(descriptor)
         }
         source.resume()
-        return source
+        return ManagedSource(source)
     }
 
     /// 保存ソフトは 1 回の保存で複数回書き込む。まとめてから通知する。

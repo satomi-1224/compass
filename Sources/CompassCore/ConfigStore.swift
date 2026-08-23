@@ -13,6 +13,13 @@ public final class ConfigStore {
     public private(set) var hotkeys = Hotkeys.fallback
     public private(set) var snippets: [SnippetDefinition] = []
 
+    /// 直近の読み込みで見つかった不備。**直るまで残る。**
+    ///
+    /// 通知は環境によっては届かない（bundle identifier が通知不可の状態に
+    /// なっていると `requestAuthorization` が黙って失敗する）。不可視の常駐で
+    /// エラーに気づく手段が消えないよう、検索窓からも読めるようにしておく。
+    public private(set) var issues: [ConfigIssue] = []
+
     /// 読み直して**内容が変わったとき**だけ呼ばれる。
     /// 変わっていなければ呼ばない（ホットキーの無用な再登録を避ける）。
     public var onChange: (@MainActor () -> Void)?
@@ -64,6 +71,7 @@ public final class ConfigStore {
         let hotkeysChanged = loadHotkeys(&issues)
         let snippetsChanged = loadSnippets(&issues)
 
+        self.issues = issues
         if !issues.isEmpty {
             reporter.report(issues)
         }

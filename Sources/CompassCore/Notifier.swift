@@ -64,7 +64,7 @@ public final class Notifier: IssueReporting {
         Task { [messages, log] in
             guard await authorized(on: center) else { return }
             for message in messages {
-                await Self.send(message, on: center, log: log)
+                Self.send(message, on: center, log: log)
             }
         }
     }
@@ -97,17 +97,22 @@ public final class Notifier: IssueReporting {
         return await task.value
     }
 
+    /// **`async` 版の `add` は使わない。** `UNUserNotificationCenter` は Sendable では
+    /// ないため、MainActor から nonisolated な `add` へ渡すと Swift 6 の並行性検査に
+    /// 弾かれる。completion handler 版なら受け渡しが起きない。
+    ///
+    /// 投入は同期に済み、順序もそのまま保たれる。
+    @MainActor
     private static func send(
         _ message: Message, on center: UNUserNotificationCenter, log: Log
-    ) async {
+    ) {
         let content = UNMutableNotificationContent()
         content.title = message.title
         content.body = message.body
         let request = UNNotificationRequest(
             identifier: UUID().uuidString, content: content, trigger: nil)
-        do {
-            try await center.add(request)
-        } catch {
+        center.add(request) { error in
+            guard let error else { return }
             log.warn("通知を出せなかった: \(error.localizedDescription)")
         }
     }

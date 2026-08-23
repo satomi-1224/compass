@@ -64,10 +64,22 @@ extension Config {
     public struct FileSearch: Equatable, Sendable {
         /// Spotlight の探索範囲。`~` から始まるパスは展開して使う。
         public var scopes: [String]
+        /// この下にあるものは候補から外す。`~` から始まるパスは展開して使う。
+        ///
+        /// **既定で `~/Library` を外す。** アプリの支援ファイルが数万件あり、
+        /// `f report` のような入力でも `~/Library/Application Support/…/Aggregated…`
+        /// のような当たりが上位に混ざる。自分で置いたファイルを探しに来ている以上、
+        /// ここは邪魔にしかならない。必要なら空にすれば元に戻る。
+        public var exclude: [String]
         public var maxResults: Int
 
-        public init(scopes: [String] = ["~"], maxResults: Int = 20) {
+        public init(
+            scopes: [String] = ["~"],
+            exclude: [String] = ["~/Library"],
+            maxResults: Int = 20
+        ) {
             self.scopes = scopes
+            self.exclude = exclude
             self.maxResults = maxResults
         }
     }
@@ -104,6 +116,15 @@ extension Config {
             let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
             let encoded = query.addingPercentEncoding(withAllowedCharacters: allowed) ?? query
             return URL(string: template.replacingOccurrences(of: "{query}", with: encoded))
+        }
+
+        /// 一覧に出す URL。**percent encode しない。**
+        ///
+        /// 実際に開くのは `resolvedURL` のほう。日本語で検索したときに
+        /// `%E6%A4%9C%E7%B4%A2` が並ぶと、どこへ行くのか読めなくなる。
+        /// ASCII だけの検索語なら実際に開く URL と同じ文字列になる。
+        public func displayURL(for query: String) -> String? {
+            url?.replacingOccurrences(of: "{query}", with: query)
         }
     }
 
@@ -172,6 +193,13 @@ extension Config {
                         issues.add("[search.files] scopes の \(index + 1) 番目が空文字")
                     }
                     config.search.files.scopes = scopes
+                }
+                if let exclude = files.exclude {
+                    if let index = exclude.firstIndex(where: { $0.isEmpty }) {
+                        // 値を出しても空文字で何も見えない。位置を伝える。
+                        issues.add("[search.files] exclude の \(index + 1) 番目が空文字")
+                    }
+                    config.search.files.exclude = exclude
                 }
                 if let maxResults = files.maxResults {
                     issues.require(maxResults, in: 1...200, label: "[search.files] max_results")
@@ -273,6 +301,7 @@ extension Config {
 
             struct Files: Decodable {
                 var scopes: [String]?
+                var exclude: [String]?
                 var maxResults: Int?
             }
 
