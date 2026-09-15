@@ -2,7 +2,7 @@ import Foundation
 import Testing
 
 @testable import CompassCore
-@testable import Snippets
+@testable import SnippetsPlugin
 
 @Suite("SnippetExpander")
 struct SnippetExpanderTests {

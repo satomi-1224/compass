@@ -33,7 +33,8 @@ public final class Notifier: IssueReporting {
         guard !issues.isEmpty else { return }
         let byFile = Dictionary(grouping: issues, by: \.file)
         // 並びを固定して、同じ不備なら同じ順で通知が出るようにする。
-        let messages = ConfigFile.allCases.compactMap { file -> Message? in
+        let messages = byFile.keys.sorted { $0.fileName < $1.fileName }.compactMap {
+            file -> Message? in
             guard let items = byFile[file], !items.isEmpty else { return nil }
             return Message(
                 title: "\(file.fileName) を読み込めなかった",

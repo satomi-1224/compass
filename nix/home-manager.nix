@@ -19,9 +19,21 @@ let
 
   configSource = sourceFor "config.toml" cfg.settings cfg.settingsFile;
   hotkeysSource = sourceFor "hotkeys.toml" cfg.hotkeys cfg.hotkeysFile;
-  snippetsSource = sourceFor "snippets.toml" cfg.snippets cfg.snippetsFile;
+  snippetsSource = sourceFor
+    "plugins-snippets.toml"
+    cfg.plugins.snippets.entries
+    cfg.plugins.snippets.settingsFile;
 in
 {
+  imports = [
+    (lib.mkRenamedOptionModule
+      [ "programs" "compass" "snippets" ]
+      [ "programs" "compass" "plugins" "snippets" "entries" ])
+    (lib.mkRenamedOptionModule
+      [ "programs" "compass" "snippetsFile" ]
+      [ "programs" "compass" "plugins" "snippets" "settingsFile" ])
+  ];
+
   options.programs.compass = {
     enable = lib.mkEnableOption "compass（macOS ネイティブのアプリランチャー）";
 
@@ -101,8 +113,9 @@ in
         **トリガーは 1 種類だけ**で、その配下に単キーを並べる。トリガーを無視した
         個別指定や複数トリガーは受け付けない（requirements.md 3.1）。
 
-        `actions` に書けるのは `search` / `clipboard` / `snippets` の 3 つだけ。
-        それ以外は `commands` に外部コマンドとして書く。
+        `actions` には本体の `search` / `clipboard` と、登録済みプラグインの
+        コマンド ID（現在は `snippets`）を書く。それ以外は `commands` に
+        外部コマンドとして書く。
         **同じキーが `actions` と `commands` の両方にあると設定エラーになる。**
 
         `trigger` を省略すると `cmd+alt+shift`、`space` を割り当てなければ
@@ -110,7 +123,7 @@ in
       '';
     };
 
-    snippets = lib.mkOption {
+    plugins.snippets.entries = lib.mkOption {
       type = lib.types.listOf tomlFormat.type;
       default = [ ];
       example = lib.literalExpression ''
@@ -121,7 +134,7 @@ in
         ]
       '';
       description = ''
-        `~/.config/compass/snippets.toml` の `[[snippets]]`。
+        `~/.config/compass/plugins/snippets.toml` の `[[snippets]]`。
 
         `body`（静的テキスト。`{date:...}` などのプレースホルダを含みうる）か
         `body_command`（外部コマンドの出力）の**どちらか一方**を書く。
@@ -145,10 +158,13 @@ in
       description = "書いてある `hotkeys.toml` をそのまま置く。`hotkeys` より優先する。";
     };
 
-    snippetsFile = lib.mkOption {
+    plugins.snippets.settingsFile = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
       default = null;
-      description = "書いてある `snippets.toml` をそのまま置く。`snippets` より優先する。";
+      description = ''
+        書いてある `plugins/snippets.toml` をそのまま置く。
+        `plugins.snippets.entries` より優先する。
+      '';
     };
 
     logFile = lib.mkOption {
@@ -187,7 +203,7 @@ in
         "compass/hotkeys.toml".source = hotkeysSource;
       })
       (lib.mkIf (snippetsSource != null) {
-        "compass/snippets.toml".source = snippetsSource;
+        "compass/plugins/snippets.toml".source = snippetsSource;
       })
     ];
 

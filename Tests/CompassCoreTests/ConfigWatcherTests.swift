@@ -60,6 +60,31 @@ struct ConfigWatcherTests {
         watcher.stop()
     }
 
+    @Test("親も無ければ存在する祖先まで上って段階的に追う")
+    func watchesNearestExistingAncestor() async throws {
+        let base = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let parent = base.appendingPathComponent("compass", isDirectory: true)
+        let directory = parent.appendingPathComponent("plugins", isDirectory: true)
+        let watcher = ConfigWatcher(
+            directory: directory.path, fileNames: ["snippets.toml"], debounce: 0.05)
+        #expect(watcher.start())
+        #expect(watcher.isWatchingDirectory == false)
+        #expect(watcher.isWatchingParent)
+
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: false)
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(watcher.isWatchingDirectory == false)
+        #expect(watcher.isWatchingParent)
+
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(watcher.isWatchingDirectory)
+        #expect(watcher.isWatchingParent == false)
+        watcher.stop()
+    }
+
     @Test("実体のあるファイルだけを掴む")
     func watchesExistingFilesOnly() throws {
         let directory = try makeDirectory()

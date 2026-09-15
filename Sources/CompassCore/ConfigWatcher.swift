@@ -16,7 +16,7 @@ import Foundation
 ///
 /// `open` はシンボリックリンクを追うため、**設定ディレクトリ自体がリンクだと
 /// 張り替えても古い実体を見続ける。** その場合と、ディレクトリがまだ無い場合は
-/// 親ディレクトリを見て復帰する。
+/// 親、または最も近い存在する祖先を見て復帰する。
 @MainActor
 public final class ConfigWatcher {
 
@@ -79,7 +79,7 @@ public final class ConfigWatcher {
         if isWatching {
             log.debug("設定の変更を監視: \(directory)")
         } else {
-            log.warn("設定ディレクトリもその親も監視できない: \(directory)")
+            log.warn("設定ディレクトリもその祖先も監視できない: \(directory)")
         }
         return isWatching
     }
@@ -141,6 +141,9 @@ public final class ConfigWatcher {
     private func rewatchAll() {
         directorySource = nil
         fileSources.removeAll()
+        // 欠けている階層が 1 つ作られた場合、次はその階層を監視したい。古い祖先の
+        // source を残すと guard に止められ、さらに下の作成を検知できない。
+        parentSource = nil
 
         watchDirectory()
         for name in fileNames { watchFile(name) }
@@ -163,17 +166,35 @@ public final class ConfigWatcher {
     }
 
     /// 親ディレクトリの監視を、必要な状態に合わせる。
+    ///
+    /// プラグイン設定は `.../compass/plugins/` と 1 階層深い。初回起動時に
+    /// `compass/` ごと無くても、存在する祖先まで上って作成を待つ。
     private func syncParentWatch() {
         guard needsParentWatch else {
             parentSource = nil
             return
         }
         guard parentSource == nil else { return }
-        parentSource = makeSource(for: parentDirectory, mask: [.write]) { [weak self] _ in
-            guard let self else { return }
-            // 設定ディレクトリが作られた・張り替えられたかもしれない。
-            self.rewatchAll()
-            self.schedule { self.onChange?() }
+
+        var candidate = parentDirectory
+        while !candidate.isEmpty {
+            if let source = makeSource(
+                for: candidate,
+                mask: [.write],
+                handler: { [weak self] _ in
+                    guard let self else { return }
+                    // 設定ディレクトリへ続く階層が作られた・張り替えられたかもしれない。
+                    self.rewatchAll()
+                    self.schedule { self.onChange?() }
+                }
+            ) {
+                parentSource = source
+                return
+            }
+
+            let next = (candidate as NSString).deletingLastPathComponent
+            guard next != candidate else { break }
+            candidate = next
         }
     }
 

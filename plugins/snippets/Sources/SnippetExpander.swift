@@ -1,14 +1,9 @@
-import CompassCore
 import Foundation
 
-/// 組み込みプレースホルダを展開する。
-///
-/// **プロセスは起動しない**（requirements.md 3.5）。現行 Hammerspoon の `now`
-/// （`os.date("%Y-%m-%d")`）はこれで表現できる。外部コマンドの出力が要るものは
-/// `body_command` を使う。
+/// 組み込みプレースホルダを、プロセスを起動せずに展開する。
 public enum SnippetExpander {
 
-    /// 書けるプレースホルダ。`--print-placeholders` とドキュメントで使う。
+    /// 書けるプレースホルダ。コマンドラインのヘルプとドキュメントで使う。
     public static let placeholders: [(syntax: String, meaning: String)] = [
         ("{date}", "yyyy-MM-dd"),
         ("{date:<書式>}", "指定した書式（例 {date:yyyy年M月d日}）"),
@@ -26,12 +21,10 @@ public enum SnippetExpander {
     /// - Parameter now: 展開に使う時刻。テストのために差し替えられる。
     public static func expand(_ text: String, now: Date = Date()) -> String {
         text.replacing(pattern) { match in
-            // **空の引数は「無い」として扱う。** `{date:}` をそのまま渡すと
-            // 書式が空文字になり、書いたものが黙って消える。
+            // 空の引数は「無い」として扱う。空書式で内容が消えるのを防ぐ。
             let argument = match.argument.map(String.init).flatMap { $0.isEmpty ? nil : $0 }
             return substitute(String(match.name), argument: argument, now: now)
-                // **知らないものはそのまま残す。** `{foo}` をリテラルとして
-                // 書きたいことがある。
+                // 未知のものはリテラルとして残す。
                 ?? String(match.0)
         }
     }
@@ -51,8 +44,7 @@ public enum SnippetExpander {
         }
     }
 
-    /// **暦とロケールを固定する。** 端末の設定によって `yyyy` が和暦になったり、
-    /// 月名が訳されたりすると、書式を指定した意味がなくなる。
+    /// 暦とロケールを固定し、端末ごとに同じ書式を返す。
     private static func format(_ date: Date, _ template: String) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")

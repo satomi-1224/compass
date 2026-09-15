@@ -2,7 +2,7 @@ import Foundation
 
 /// 検索窓に並ぶ候補 1 件。
 ///
-/// アプリ・ファイル・Web・クリップボード履歴・スニペットを同じ形で扱い、
+/// アプリ・ファイル・Web・クリップボード履歴・プラグインを同じ形で扱い、
 /// SearchUI がどれも同じ見た目で並べられるようにする（requirements.md 6章）。
 public struct Candidate: Equatable, Sendable, Identifiable {
     /// 一覧を作り直しても選択位置を保てるようにするための識別子。
@@ -44,7 +44,7 @@ public struct Candidate: Equatable, Sendable, Identifiable {
 public enum CandidateIcon: Equatable, Sendable {
     /// アプリやファイルのアイコンをパスから取る。
     case file(path: String)
-    /// SF Symbol。パスを持たない候補（Web 検索・履歴・スニペット）に使う。
+    /// SF Symbol。パスを持たない候補（Web 検索・履歴・プラグイン）に使う。
     case symbol(String)
 }
 
@@ -64,11 +64,16 @@ public enum CandidateAction: Equatable, Sendable {
     /// **選ばれてから実行する。** 一覧を開くだけで走らせると、副作用のある
     /// コマンドを書いていた場合に選んでいないのに実行されてしまう。
     case pasteCommandOutput(String)
+    /// 登録済みプラグインのコマンドを呼ぶ。
+    ///
+    /// UI 遷移を伴いうるため `ActionRunner` ではなく、プラグインレジストリを持つ
+    /// `SearchController` が解決する。
+    case invokePluginCommand(String)
 }
 
 /// 一覧に 1 行で出すための整形。
 ///
-/// クリップボード履歴もスニペットも複数行のテキストを持ちうる。そのまま出すと
+/// クリップボード履歴やプラグイン候補は複数行のテキストを持ちうる。そのまま出すと
 /// 行が崩れるので、畳んで切る。
 public enum TextSummary {
 

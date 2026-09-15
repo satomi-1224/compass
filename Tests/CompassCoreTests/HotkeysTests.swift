@@ -24,13 +24,16 @@ struct HotkeysTests {
             return = "pgrep -f MagicBoard && pkill -f MagicBoard || ~/bin/MagicBoard &"
             """
 
-        let hotkeys = try Hotkeys.parse(toml)
+        let hotkeys = try Hotkeys.parse(toml, pluginActions: ["snippets"])
 
         #expect(hotkeys.trigger == [.command, .option, .shift])
         #expect(hotkeys.bindings.count == 8)
 
         let space = hotkeys.bindings.first { $0.key == "space" }
         #expect(space?.action == .builtin(.search))
+
+        let snippets = hotkeys.bindings.first { $0.key == "w" }
+        #expect(snippets?.action == .plugin("snippets"))
 
         let terminal = hotkeys.bindings.first { $0.key == "t" }
         #expect(terminal?.action == .command("open -a WezTerm"))
@@ -55,7 +58,7 @@ struct HotkeysTests {
             t = "open -a WezTerm"
             """
 
-        let hotkeys = try Hotkeys.parse(toml)
+        let hotkeys = try Hotkeys.parse(toml, pluginActions: ["snippets"])
 
         #expect(hotkeys.trigger == [.command, .option, .shift])
         #expect(hotkeys.bindings.count == 5)
@@ -136,15 +139,20 @@ struct HotkeysTests {
         #expect(issues.items[0].detail.contains("foo"))
     }
 
-    /// 組み込みは検索窓・クリップボード履歴・スニペット一覧の 3 つだけ
-    /// （requirements.md 3.3）。
-    @Test("actions の値は組み込みアクション名のみ")
-    func rejectsUnknownBuiltinAction() throws {
+    @Test("actions の値は本体または登録済みプラグインのみ")
+    func rejectsUnknownAction() throws {
         let issues = try #require(thrownIssues {
             try Hotkeys.parse(#"[actions]\#nv = "paste""#)
         })
         #expect(issues.items[0].detail.contains("search"))
         #expect(issues.items[0].detail.contains("clipboard"))
+    }
+
+    @Test("未登録のプラグイン名は拒否する")
+    func rejectsUnregisteredPluginAction() {
+        #expect(throws: ConfigIssues.self) {
+            try Hotkeys.parse(#"[actions]\#nw = "snippets""#)
+        }
     }
 
     @Test("空のコマンドはエラー")

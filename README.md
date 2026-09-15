@@ -14,9 +14,9 @@
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="license">
 </p>
 
-アプリ・ファイル・Web を 1 つの検索窓から開き、よく使うコマンドは窓を経由せず一発で
-実行します。クリップボード履歴とスニペットも同じ窓から選べます。**メニューバーにも
-Dock にも出ない常駐プロセス**で、設定は TOML 3 枚です。
+アプリ・ファイル・Web とプラグインコマンドを 1 つの検索窓から開き、よく使うコマンドは
+窓を経由せず一発で実行します。クリップボード履歴とスニペットも同じ窓から選べます。
+**メニューバーにも Dock にも出ない常駐プロセス**です。
 
 ```
 ┌────────────────────────────────────────────┐
@@ -32,6 +32,8 @@ Dock にも出ない常駐プロセス**で、設定は TOML 3 枚です。
 
 - **入口は 2 つだけ** — 検索窓（`⌘⌥⇧Space`）と、窓を経由しない直接ホットキー
 - **キーワードで切り替わる** — `g swift` で Google、`f report` でファイル検索
+- **プラグインも通常検索から開ける** — `sni` や `スニペット` でコマンドを探し、
+  選ぶとその一覧へ移る
 - **並び順が変わらない** — fuzzy マッチのみで**使用頻度は学習しない。** 同じ入力には
   常に同じ結果が返る
 - **見えている名前で引ける** — Finder と同じ表示名（「システム設定」「計算機」）で
@@ -40,8 +42,8 @@ Dock にも出ない常駐プロセス**で、設定は TOML 3 枚です。
   印を付けた内容は残さない
 - **スニペット** — 静的テキスト、`{date:yyyy-MM-dd}` などのプレースホルダ、
   外部コマンドの出力
-- **設定は TOML 3 枚** — 保存すると自動で読み直す。**不備があっても直前の正常な設定で
-  動き続ける**
+- **設定は責務ごとに分離** — プラグイン設定は `plugins/` 配下。保存すると自動で読み直し、
+  **不備があっても直前の正常な設定で動き続ける**
 - **トリガーは 1 種類だけ** — `hotkeys.toml` の 1 行を直せば全キーに効く
 
 ## 動作要件
@@ -97,7 +99,7 @@ cd compass
       };
     };
 
-    snippets = [
+    plugins.snippets.entries = [
       { title = "now"; body = "{date}"; }
       { title = "branch"; body_command = "git branch --show-current"; }
     ];
@@ -110,8 +112,8 @@ cd compass
 | `enable` | `false` | 有効にする |
 | `settings` | `{}` | `config.toml` の内容 |
 | `hotkeys` | `{}` | `hotkeys.toml` の内容 |
-| `snippets` | `[]` | `snippets.toml` の `[[snippets]]` |
-| `settingsFile` / `hotkeysFile` / `snippetsFile` | `null` | 書いてある TOML をそのまま置く。属性集合より優先 |
+| `plugins.snippets.entries` | `[]` | `plugins/snippets.toml` の `[[snippets]]` |
+| `settingsFile` / `hotkeysFile` / `plugins.snippets.settingsFile` | `null` | 書いてある TOML をそのまま置く。属性集合より優先 |
 | `app` | `~/Applications/compass.app` | 本体の場所 |
 | `startService` | `true` | launchd agent として登録し、ログイン時に起動する |
 | `logFile` | `~/Library/Logs/compass.log` | launchd から起動したときのログ |
@@ -154,11 +156,12 @@ cd compass
 
 ### 検索窓
 
-素の入力はアプリ検索、先頭のキーワードでモードが変わります。
+素の入力はアプリとプラグインコマンドの検索、先頭のキーワードでモードが変わります。
 
 ```
 chr        → アプリ:   Google Chrome / Chromium
 設定       → アプリ:   システム設定
+sni        → コマンド: スニペット
 g swift    → Web:      Google で "swift" を検索
 f report   → ファイル: ~/Documents/report.md
 ```
@@ -182,14 +185,19 @@ f report   → ファイル: ~/Documents/report.md
 
 ## 設定
 
-`~/.config/compass/` に役割別の 3 ファイルを置きます。**保存すると自動で読み直します**
+`~/.config/compass/` に役割別のファイルを置きます。**保存すると自動で読み直します**
 （`darwin-rebuild switch` によるシンボリックリンクの張り替えも検知します）。
 
 ```
 config.toml     アプリ本体の設定
 hotkeys.toml    ショートカット登録
-snippets.toml   スニペット登録
+plugins/
+└─ snippets.toml   スニペットプラグインの設定
 ```
+
+既存の Nix 設定にある `snippets` / `snippetsFile` は移行用の別名として引き続き読めます。
+新しい名前へ変更すると警告も消えます。TOML を直接置いている場合だけ、従来の
+`snippets.toml` を `plugins/snippets.toml` へ移してください。
 
 **設定の誤りで常駐は止まりません。** 不備があると通知センターに出て、**直前の正常な
 設定のまま動き続けます**。範囲外の値は丸めずにエラーにします（丸めると「設定したのに
@@ -243,14 +251,15 @@ t = "open -a WezTerm"
 f = "open -a Finder"
 ```
 
-`[actions]` に書けるのは `search` / `clipboard` / `snippets` の 3 つだけです。それ以外は
-`[commands]` に外部コマンドとして書きます（`/bin/sh -c` を通すので `~` や `&&` が使えます）。
+`[actions]` には本体の `search` / `clipboard` と、登録済みプラグインのコマンド ID
+（現在は `snippets`）を書けます。それ以外は `[commands]` に外部コマンドとして書きます
+（`/bin/sh -c` を通すので `~` や `&&` が使えます）。
 
 **同じキーが両方にあると設定エラーになります。** `return` と `enter` のように綴りが
 違っても同じ物理キーなら衝突として扱います。書けるキー名は `compass --print-keys` で
 出ます。
 
-### snippets.toml
+### plugins/snippets.toml
 
 ```toml
 [[snippets]]
@@ -296,7 +305,7 @@ tail -f ~/Library/Logs/compass.log
 --print-candidates <クエリ>  検索結果を出して終わる
 --print-apps                 列挙したアプリを出して終わる
 --print-keys                 hotkeys.toml に書けるキー名
---print-placeholders         snippets.toml に書けるプレースホルダ
+--print-placeholders         plugins/snippets.toml に書けるプレースホルダ
 ```
 
 ```bash
@@ -324,12 +333,15 @@ Xcode は要りません。`scripts/env.sh` が `Testing.framework` の探索パ
 CompassCore       設定ロード / Action 実行 / 候補の型 / fuzzy マッチ  ← UI を知らない
 HotkeyEngine      Carbon のグローバルホットキー                       ← SearchUI に依存しない
 SearchUI          NSPanel + NSTableView の検索窓
+PluginKit         検索可能なコマンド / 一覧 / 設定ライフサイクルの契約
 ClipboardHistory  ポーリング監視と永続化
-Snippets          プレースホルダの展開
+plugins/catalog   同梱プラグインの登録口
+plugins/snippets  スニペットの設定 / 展開 / 候補生成
 ```
 
-`HotkeyEngine` が `SearchUI` を知らないことをモジュール境界で担保しています。将来
-プロセスを分けたくなったときの退路として残してあります。
+`HotkeyEngine` が `SearchUI` を知らないことをモジュール境界で担保しています。
+プラグイン追加の手順と境界は [plugins/README.md](plugins/README.md)、設計判断は
+[docs/plugin-architecture.md](docs/plugin-architecture.md) にまとめています。
 
 設計の根拠と、実装中に判明して方針を変えた点は
 [docs/requirements.md](docs/requirements.md) にあります。

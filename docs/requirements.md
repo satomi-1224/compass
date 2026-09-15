@@ -32,13 +32,20 @@ compass.app (1 process)
 ├─ CompassCore     設定ロード / Action 実行
 ├─ HotkeyEngine    ← UI に依存しない
 │    └ ⌘⌥⇧T → Action.run("open -a WezTerm")
-├─ SearchUI        NSPanel + SwiftUI
+├─ PluginKit       検索可能なコマンドと一覧の契約
+├─ SearchUI        NSPanel + NSTableView
 │    └ ⌘⌥⇧Space → 検索窓 → Action.run(...)
 ├─ ClipboardHistory  独立モジュール（config で完全に無効化可能）
-└─ Snippets
+└─ plugins/
+   ├─ catalog      同梱プラグインの登録口
+   └─ snippets     スニペットの設定 / 展開 / 候補生成
 ```
 
 `ClipboardHistory` を独立させるのは、全コピー内容をディスクに永続化するという責務の性質がランチャーと異なるため。将来の除外設定追加や、丸ごと切り離す判断に備える。
+
+プラグイン固有の型は本体へ持ち込まない。各プラグインは検索へ公開するコマンドと、
+選択後に表示する候補一覧を登録する。詳細は
+[plugin-architecture.md](plugin-architecture.md) に記す。
 
 ## 3. 機能要件
 
@@ -52,19 +59,21 @@ compass.app (1 process)
 
 | キー | 動作 | 種別 |
 |---|---|---|
-| `<trigger>+Space` | 検索窓（アプリ） | 組み込み・デフォルト固定 |
+| `<trigger>+Space` | メイン検索窓 | 組み込み・デフォルト固定 |
 | `<trigger>+V` | クリップボード履歴 | 組み込み |
-| `<trigger>+W` | スニペット一覧 | 組み込み |
+| `<trigger>+W` | スニペット一覧 | プラグインコマンド |
 | `<trigger>+{任意}` | 外部コマンド実行 | 設定で自由に定義 |
 
-`+Space` のアプリ検索のみデフォルトとして固定し、それ以外は `hotkeys.toml` で自由に割り当てる。
+`+Space` のメイン検索のみデフォルトとして固定し、それ以外は `hotkeys.toml` で自由に割り当てる。
 
 ### 3.2 検索窓
 
-**キーワード切替方式（Alfred 方式）。** 素の入力はアプリ検索、先頭キーワードでモードが変わり、それ以降はそのモードのクエリとして扱う。
+素の入力はアプリとプラグインコマンドの検索、先頭キーワードでモードが変わり、
+それ以降はそのモードのクエリとして扱う。
 
 ```
 chr        → アプリ:   Google Chrome / Chromium
+sni        → コマンド: スニペット
 g swift    → Web:      Google で "swift" を検索
 f report   → ファイル: ~/Documents/report.md
 ```
@@ -120,7 +129,9 @@ f report   → ファイル: ~/Documents/report.md
 
 ### 3.3 ホットキー直接実行
 
-`hotkeys.toml` に定義したキーに外部コマンドを紐づけ、検索窓を経由せず一発で実行する。実行モデルは**外部コマンド実行のみ**。組み込みアクションは検索窓・クリップボード履歴・スニペット一覧を開く 3 つに限定する（外部コマンドでは表現できないため）。
+`hotkeys.toml` に定義したキーに、本体アクション、登録済みプラグインコマンド、または
+外部コマンドを紐づけ、検索窓を経由せず一発で実行する。プラグインコマンドは通常検索と
+同じ ID を使い、入口ごとに別の処理を持たない。
 
 ### 3.4 クリップボード履歴
 
@@ -136,6 +147,9 @@ f report   → ファイル: ~/Documents/report.md
 
 ### 3.5 スニペット
 
+`plugins/snippets` に置く同梱プラグイン。通常検索では `スニペット` / `snippet` で
+コマンドを見つけられ、`hotkeys.toml` の `snippets` から同じ一覧を直接開ける。
+
 - 静的テキスト
 - 組み込みプレースホルダ（`{date:...}` など）— プロセス起動なしで即時展開
 - 外部コマンドの出力（`body_command`）
@@ -144,13 +158,16 @@ f report   → ファイル: ~/Documents/report.md
 
 ## 4. 設定ファイル
 
-`~/.config/compass/` に**役割別の 3 ファイル**を置く。共通 / マシン固有の 2 層構成は**採らない** — Nix がマシンごとにファイルを生成するため、マージは Nix の責任とし、アプリ側は 3 ファイルを読むだけに保つ。
+`~/.config/compass/` に役割別のファイルを置く。共通 / マシン固有の 2 層構成は
+**採らない** — Nix がマシンごとにファイルを生成するため、マージは Nix の責任とする。
+本体設定は直下、各プラグインの設定は `plugins/` 配下に置く。
 
 ```
 ~/.config/compass/
 ├─ config.toml     アプリ本体の設定
 ├─ hotkeys.toml    ショートカット登録
-└─ snippets.toml   スニペット登録
+└─ plugins/
+   └─ snippets.toml   スニペット登録
 ```
 
 ### config.toml
@@ -190,7 +207,7 @@ url    = "https://www.google.com/search?q={query}"
 ```toml
 trigger = "cmd+alt+shift"
 
-# 組み込みアクション
+# 本体アクションと登録済みプラグインコマンド
 [actions]
 space = "search"
 v     = "clipboard"
@@ -209,7 +226,7 @@ return = "pgrep -f MagicBoard && pkill -f MagicBoard || ~/Work/dotfiles/magicboa
 - 同じキーが `[actions]` と `[commands]` の両方に現れた場合は**設定エラーとして通知**する
 - キー名は `t` のような単字のほか、`space` / `return` / `delete` などの名前付きキーを受け付ける
 
-### snippets.toml
+### plugins/snippets.toml
 
 ```toml
 [[snippets]]

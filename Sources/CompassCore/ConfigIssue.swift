@@ -5,13 +5,20 @@ import TOMLDecoder
 /// Swift の命名へ変換しながら読む。
 let tomlDecoder = TOMLDecoder(strategy: .init(key: .convertFromSnakeCase))
 
-/// 設定ファイルの種類。
-public enum ConfigFile: String, Sendable, CaseIterable, Equatable {
-    case config = "config.toml"
-    case hotkeys = "hotkeys.toml"
-    case snippets = "snippets.toml"
+/// 設定ディレクトリからの相対パス。
+///
+/// enum にするとプラグインを足すたびに本体の列挙を増やす必要がある。値型にして、
+/// 各プラグインが自分の設定パスを宣言できるようにする。
+public struct ConfigFile: Hashable, Sendable {
+    public var fileName: String
 
-    public var fileName: String { rawValue }
+    public init(_ fileName: String) {
+        self.fileName = fileName
+    }
+
+    public static let config = ConfigFile("config.toml")
+    public static let hotkeys = ConfigFile("hotkeys.toml")
+    public static let coreFiles: [ConfigFile] = [.config, .hotkeys]
 }
 
 /// 設定の不備 1 件。
@@ -48,26 +55,28 @@ public struct ConfigIssues: Error, Equatable, Sendable, CustomStringConvertible 
 /// **範囲外や不明な値は丸めずにエラーにする。** 丸めると「設定したのに効いていない」
 /// 状態になり、正常時に黙る設計では気づく手段がない。呼び出し側は直前の正常な設定を
 /// 保持して動き続ける（requirements.md 5.4）。
-struct IssueCollector {
-    let file: ConfigFile
-    private(set) var items: [ConfigIssue] = []
+public struct IssueCollector {
+    public let file: ConfigFile
+    public private(set) var items: [ConfigIssue] = []
 
-    init(file: ConfigFile) { self.file = file }
+    public init(file: ConfigFile) { self.file = file }
 
-    var isEmpty: Bool { items.isEmpty }
+    public var isEmpty: Bool { items.isEmpty }
 
-    mutating func add(_ detail: String) {
+    public mutating func add(_ detail: String) {
         items.append(ConfigIssue(file: file, detail: detail))
     }
 
     /// 範囲を外れていれば記録する。**値は丸めない。**
-    mutating func require<T: Comparable>(_ value: T, in range: ClosedRange<T>, label: String) {
+    public mutating func require<T: Comparable>(
+        _ value: T, in range: ClosedRange<T>, label: String
+    ) {
         guard !range.contains(value) else { return }
         add("\(label) が範囲外: \(value)（有効範囲 \(range.lowerBound)〜\(range.upperBound)）")
     }
 
     /// 綴りから enum を引く。不明なら候補を添えて記録し nil を返す。
-    mutating func value<E>(of text: String, label: String, as type: E.Type) -> E?
+    public mutating func value<E>(of text: String, label: String, as type: E.Type) -> E?
     where E: RawRepresentable & CaseIterable, E.RawValue == String {
         if let parsed = E(rawValue: text) { return parsed }
         let names = E.allCases.map(\.rawValue).joined(separator: " / ")
@@ -75,7 +84,7 @@ struct IssueCollector {
         return nil
     }
 
-    func throwIfNeeded() throws {
+    public func throwIfNeeded() throws {
         guard !items.isEmpty else { return }
         throw ConfigIssues(items)
     }

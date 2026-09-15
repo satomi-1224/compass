@@ -1,6 +1,8 @@
+import CompassCore
 import Foundation
+import TOMLDecoder
 
-/// `snippets.toml` の 1 件。
+/// `plugins/snippets.toml` の 1 件。
 public struct SnippetDefinition: Equatable, Sendable {
     public var title: String
     public var body: Body
@@ -12,26 +14,30 @@ public struct SnippetDefinition: Equatable, Sendable {
 
     /// 中身の出どころ。**どちらか一方**で、両方は書けない。
     public enum Body: Equatable, Sendable {
-        /// 静的テキスト。組み込みプレースホルダ（`{date:...}`）を含みうる。
+        /// 静的テキスト。組み込みプレースホルダを含みうる。
         case text(String)
         /// 外部コマンドの出力。
         case command(String)
     }
 }
 
-// MARK: - パース
-
 extension SnippetDefinition {
 
     public static func parseAll(_ toml: String) throws -> [SnippetDefinition] {
         let raw: Raw
         do {
-            raw = try tomlDecoder.decode(Raw.self, from: toml)
+            let decoder = TOMLDecoder(strategy: .init(key: .convertFromSnakeCase))
+            raw = try decoder.decode(Raw.self, from: toml)
         } catch {
-            throw ConfigIssues([ConfigIssue(file: .snippets, detail: "解釈できない: \(error)")])
+            throw ConfigIssues([
+                ConfigIssue(
+                    file: SnippetPlugin.configurationFile,
+                    detail: "解釈できない: \(error)"
+                )
+            ])
         }
 
-        var issues = IssueCollector(file: .snippets)
+        var issues = IssueCollector(file: SnippetPlugin.configurationFile)
         var result: [SnippetDefinition] = []
         var seen = Set<String>()
 
@@ -42,7 +48,6 @@ extension SnippetDefinition {
                 issues.add("\(label) に title が無い")
                 continue
             }
-            // 一覧では title で選ぶため、重複するとどちらが出たのか分からない。
             guard !seen.contains(title) else {
                 issues.add("\(label) title が重複している: \(title)")
                 continue
@@ -50,9 +55,9 @@ extension SnippetDefinition {
 
             let body: Body
             switch (item.body, item.bodyCommand) {
-            case let (text?, nil):
+            case (let text?, nil):
                 body = .text(text)
-            case let (nil, command?):
+            case (nil, let command?):
                 guard !command.trimmingCharacters(in: .whitespaces).isEmpty else {
                     issues.add("\(label) \(title): body_command が空")
                     continue
@@ -74,7 +79,7 @@ extension SnippetDefinition {
         return result
     }
 
-    fileprivate struct Raw: Decodable {
+    private struct Raw: Decodable {
         var snippets: [Item]?
 
         struct Item: Decodable {

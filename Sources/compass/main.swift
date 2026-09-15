@@ -3,8 +3,9 @@ import ApplicationServices
 import ClipboardHistory
 import CompassCore
 import HotkeyEngine
+import PluginCatalog
+import PluginKit
 import SearchUI
-import Snippets
 
 /// 不可視の常駐プロセス（requirements.md 5.3）。
 ///
@@ -17,11 +18,19 @@ import Snippets
 final class CompassDelegate: NSObject, NSApplicationDelegate {
 
     private let log = Log.shared
-    private let store = ConfigStore()
+    private let store: ConfigStore
+    private let plugins: PluginRegistry
     private let engine = HotkeyEngine()
     private var search: SearchController?
     private var clipboard: ClipboardHistory?
-    private var snippets: SnippetLibrary?
+
+    override init() {
+        let directory = ConfigStore.defaultDirectory
+        let plugins = PluginCatalog.makeRegistry(configDirectory: directory)
+        self.plugins = plugins
+        self.store = ConfigStore(directory: directory, pluginActions: plugins.commandIDs)
+        super.init()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
@@ -29,8 +38,12 @@ final class CompassDelegate: NSObject, NSApplicationDelegate {
         // 設定は使うたびに読み直させる。リロードがそのまま反映される。
         let search = SearchController(
             config: { [weak self] in self?.store.config ?? Config() },
-            issues: { [weak self] in self?.store.issues ?? [] },
-            configDirectory: store.directory
+            issues: { [weak self] in
+                guard let self else { return [] }
+                return self.store.issues + self.plugins.issues
+            },
+            configDirectory: store.directory,
+            plugins: plugins
         )
         search.start()
         self.search = search
@@ -38,23 +51,31 @@ final class CompassDelegate: NSObject, NSApplicationDelegate {
         clipboard = ClipboardHistory(settings: { [weak self] in
             self?.store.config.clipboard ?? Config.Clipboard()
         })
-        snippets = SnippetLibrary(definitions: { [weak self] in self?.store.snippets ?? [] })
 
         engine.onTrigger = { [weak self] binding in
             self?.perform(binding.action)
         }
 
-        let issues = store.load()
-        if issues.isEmpty {
+        let coreIssues = store.load()
+        let pluginIssues = plugins.loadConfigurations()
+        if coreIssues.isEmpty, pluginIssues.isEmpty {
             log.info("設定を読み込んだ: \(store.directory.path)")
         }
         applyConfiguration()
 
         // 初回適用のあとに繋ぐ。load() の中で呼ばれて二重に適用されるのを避ける。
         store.onChange = { [weak self] in self?.applyConfiguration() }
+        plugins.onChange = { [weak self] in
+            guard let self else { return }
+            self.search?.refreshVisiblePlugin()
+            self.log.debug("プラグイン設定を再読み込みした")
+        }
 
         if !store.startWatching() {
             log.warn("設定ディレクトリを監視できない: \(store.directory.path)")
+        }
+        if !plugins.startWatching() {
+            log.warn("一部のプラグイン設定を監視できない: \(store.directory.path)/plugins")
         }
 
         requestAccessibilityIfNeeded()
@@ -65,18 +86,21 @@ final class CompassDelegate: NSObject, NSApplicationDelegate {
     ///
     /// **プロンプトを出さないとシステム設定の一覧にも現れない。** ユーザーが「+」から
     /// 手で探して追加するしかなくなる。要件 5.3 の「正常時は黙る」に反しないよう、
-    /// クリップボード履歴とスニペットのどちらも割り当てていなければ何もしない。
+    /// ホットキーまたは通常検索から貼り付け機能へ到達できなければ何もしない。
     private func requestAccessibilityIfNeeded() {
         guard !AXIsProcessTrusted() else { return }
 
-        let usesPaste = store.hotkeys.bindings.contains { binding in
-            guard case .builtin(let action) = binding.action else { return false }
-            return action == .clipboard || action == .snippets
-        }
+        // プラグインはホットキーへ割り当てなくても通常検索から使える。設定された
+        // ホットキーだけを見ると、検索経由で初めて貼り付ける人へ許可を案内できない。
+        let usesPaste =
+            plugins.hasAccessibilityDependentCommands
+            || store.hotkeys.bindings.contains { binding in
+                binding.action == .builtin(.clipboard)
+            }
         guard usesPaste else { return }
 
         log.warn(
-            "アクセシビリティ権限が無い。クリップボード履歴とスニペットのペーストに必要"
+            "アクセシビリティ権限が無い。貼り付けを行う機能に必要"
                 + "（許可するまで、選んでもクリップボードに載るだけで貼られない）")
         // `kAXTrustedCheckOptionPrompt` は C の `extern CFStringRef` で、Swift 6 からは
         // 共有可変状態として扱われて参照できない。値は変わらないのでリテラルで書く。
@@ -98,7 +122,11 @@ final class CompassDelegate: NSObject, NSApplicationDelegate {
 
         if arguments.contains("--show-clipboard") {
             log.info("--show-clipboard: クリップボード履歴を出す")
-            toggleList(placeholder: "クリップボード履歴", symbolName: "list.clipboard") {
+            toggleList(
+                id: "clipboard",
+                placeholder: "クリップボード履歴",
+                symbolName: "list.clipboard"
+            ) {
                 [weak self] in
                 self?.clipboard?.candidates() ?? []
             }
@@ -107,9 +135,7 @@ final class CompassDelegate: NSObject, NSApplicationDelegate {
 
         if arguments.contains("--show-snippets") {
             log.info("--show-snippets: スニペット一覧を出す")
-            toggleList(placeholder: "スニペット", symbolName: "text.badge.plus") { [weak self] in
-                self?.snippets?.candidates() ?? []
-            }
+            _ = search?.presentPluginCommand("snippets")
             return
         }
 
@@ -137,7 +163,7 @@ final class CompassDelegate: NSObject, NSApplicationDelegate {
         log.debug(
             "設定を適用: trigger=\(store.hotkeys.trigger.symbols)"
                 + " bindings=\(engine.registeredCount)/\(store.hotkeys.bindings.count)"
-                + " snippets=\(store.snippets.count)"
+                + " plugin_commands=\(plugins.commandCount)"
                 + " clipboard=\(store.config.clipboard.enabled ? "on" : "off")"
         )
     }
@@ -147,19 +173,20 @@ final class CompassDelegate: NSObject, NSApplicationDelegate {
         switch action {
         case .command(let command):
             ActionRunner.run(command)
+        case .plugin(let commandID):
+            _ = search?.togglePluginCommand(commandID)
         case .builtin(let builtin):
             switch builtin {
             case .search:
                 search?.toggle(.search)
             case .clipboard:
-                toggleList(placeholder: "クリップボード履歴", symbolName: "list.clipboard") {
+                toggleList(
+                    id: "clipboard",
+                    placeholder: "クリップボード履歴",
+                    symbolName: "list.clipboard"
+                ) {
                     [weak self] in
                     self?.clipboard?.candidates() ?? []
-                }
-            case .snippets:
-                toggleList(placeholder: "スニペット", symbolName: "text.badge.plus") {
-                    [weak self] in
-                    self?.snippets?.candidates() ?? []
                 }
             }
         }
@@ -168,20 +195,25 @@ final class CompassDelegate: NSObject, NSApplicationDelegate {
     /// 一覧を開閉する。
     ///
     /// **同じ一覧なら閉じ、違う入口なら切り替える。** 履歴を見ている最中に
-    /// スニペットのキーを押したら、閉じるのではなくスニペットが出てほしい。
+    /// 別のプラグインのキーを押したら、閉じるのではなくその一覧が出てほしい。
     ///
     /// 候補は**開くときだけ**作る。閉じるときに作っても捨てるだけで、
     /// クリップボード履歴のように件数が多いと無駄になる。
     private func toggleList(
-        placeholder: String, symbolName: String, candidates: () -> [Candidate]
+        id: String, placeholder: String, symbolName: String, candidates: () -> [Candidate]
     ) {
         guard let search else { return }
-        if search.isShowing(.list(placeholder)) {
+        if search.isShowing(.list(id)) {
             search.dismiss()
             return
         }
         search.present(
-            .list(placeholder: placeholder, symbolName: symbolName, candidates: candidates()))
+            .list(
+                id: id,
+                placeholder: placeholder,
+                symbolName: symbolName,
+                candidates: candidates()
+            ))
     }
 
     /// **`Cmd+V` を解釈させるには Edit メニューが必要**（requirements.md 7.4）。
@@ -242,9 +274,9 @@ if CommandLine.arguments.contains("--print-keys") {
     exit(0)
 }
 
-// `snippets.toml` の `body` に書けるプレースホルダ。
+// `plugins/snippets.toml` の `body` に書けるプレースホルダ。
 if CommandLine.arguments.contains("--print-placeholders") {
-    for placeholder in SnippetExpander.placeholders {
+    for placeholder in PluginCatalog.snippetPlaceholders {
         print("\(placeholder.syntax)\t\(placeholder.meaning)")
     }
     exit(0)
@@ -267,10 +299,13 @@ if let index = CommandLine.arguments.firstIndex(of: "--print-candidates") {
     }
 
     let query = CommandLine.arguments[next]
-    let store = ConfigStore()
+    let directory = ConfigStore.defaultDirectory
+    let plugins = PluginCatalog.makeRegistry(configDirectory: directory)
+    let store = ConfigStore(directory: directory, pluginActions: plugins.commandIDs)
     store.load()
+    plugins.loadConfigurations()
 
-    let controller = SearchController(config: { store.config })
+    let controller = SearchController(config: { store.config }, plugins: plugins)
     controller.start()
     controller.candidates(for: query) { candidates in
         for candidate in candidates {

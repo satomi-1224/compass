@@ -1,10 +1,7 @@
 import CompassCore
 import Foundation
 
-/// スニペットを候補にする。
-///
-/// 一覧の見た目と選択は SearchUI を流用する（requirements.md 6章）。ここは
-/// 「何を貼るか」を決めるだけ。
+/// スニペット定義を、共通の検索 UI に渡せる候補へ変換する。
 @MainActor
 public final class SnippetLibrary {
 
@@ -14,11 +11,7 @@ public final class SnippetLibrary {
         self.definitions = definitions
     }
 
-    /// 一覧に出す候補。
-    ///
-    /// `body` は**ここで展開する。** 一覧に「何が貼られるか」を出せるようにするため。
-    /// `body_command` は**実行しない。** 一覧を開くだけで走ると、副作用のある
-    /// コマンドを書いていた場合に選んでいないのに実行される。
+    /// `body` は表示時に展開するが、`body_command` は選ばれるまで実行しない。
     public func candidates(now: Date = Date()) -> [Candidate] {
         definitions().map { definition in
             switch definition.body {
@@ -36,7 +29,6 @@ public final class SnippetLibrary {
                     id: "snippet:\(definition.title)",
                     title: definition.title,
                     subtitle: "$ \(TextSummary.line(of: command))",
-                    // 外部コマンドを走らせることが見た目で分かるようにする。
                     icon: .symbol("terminal"),
                     action: .pasteCommandOutput(command)
                 )
