@@ -2,18 +2,18 @@ import Foundation
 
 /// ホットキーが起こすこと。
 ///
-/// 実行モデルは**外部コマンド実行のみ**。組み込みは検索窓・クリップボード履歴・
-/// スニペット一覧を開く 3 つに限る（外部コマンドでは表現できないため。
-/// requirements.md 3.3）。
+/// 本体アクション、登録済みプラグイン、外部コマンドのどれを呼ぶかだけを持つ。
+/// プラグイン固有の型をここへ持ち込まないため、新しいプラグインを足しても
+/// CompassCore の列挙を増やす必要はない。
 public enum Action: Equatable, Sendable {
     case builtin(BuiltinAction)
+    case plugin(String)
     case command(String)
 }
 
 public enum BuiltinAction: String, Equatable, Sendable, CaseIterable {
     case search
     case clipboard
-    case snippets
 }
 
 /// 登録するキー 1 つ。
@@ -64,7 +64,9 @@ public struct Hotkeys: Equatable, Sendable {
 
 extension Hotkeys {
 
-    public static func parse(_ toml: String) throws -> Hotkeys {
+    public static func parse(
+        _ toml: String, pluginActions: Set<String> = []
+    ) throws -> Hotkeys {
         let raw: Raw
         do {
             raw = try tomlDecoder.decode(Raw.self, from: toml)
@@ -117,11 +119,21 @@ extension Hotkeys {
         for name in actions.keys.sorted() {
             guard let text = actions[name] else { continue }
             guard let code = resolve(name, section: "actions") else { continue }
-            guard
-                let builtin = issues.value(
-                    of: text, label: "[actions] \(name)", as: BuiltinAction.self)
-            else { continue }
-            bindings.append(HotkeyBinding(key: name, keyCode: code, action: .builtin(builtin)))
+
+            let action: Action
+            if let builtin = BuiltinAction(rawValue: text) {
+                action = .builtin(builtin)
+            } else if pluginActions.contains(text) {
+                action = .plugin(text)
+            } else {
+                let candidates = (BuiltinAction.allCases.map(\.rawValue) + Array(pluginActions))
+                    .sorted()
+                    .joined(separator: " / ")
+                issues.add(
+                    "[actions] \(name) の値が不明: \(text)（候補: \(candidates)）")
+                continue
+            }
+            bindings.append(HotkeyBinding(key: name, keyCode: code, action: action))
         }
 
         let commands = raw.commands ?? [:]

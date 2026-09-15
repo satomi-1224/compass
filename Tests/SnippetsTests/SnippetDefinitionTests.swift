@@ -1,12 +1,12 @@
 import Testing
 
 @testable import CompassCore
+@testable import SnippetsPlugin
 
 @Suite("SnippetDefinition のパース")
 struct SnippetDefinitionTests {
 
-    /// requirements.md 4章の設定例をそのまま読む。
-    @Test("要件に載っている設定例を読める")
+    @Test("設定例を読める")
     func parsesDocumentedExample() throws {
         let toml = """
             [[snippets]]
@@ -14,7 +14,7 @@ struct SnippetDefinitionTests {
             body  = "{date:yyyy-MM-dd}"
 
             [[snippets]]
-            title = "TwitterID"
+            title = "account"
             body  = "@example"
 
             [[snippets]]
@@ -30,9 +30,7 @@ struct SnippetDefinitionTests {
         #expect(snippets[2].body == .command("git branch --show-current"))
     }
 
-    /// home-manager の `pkgs.formats.toml` が生成する形をそのまま読む。
-    /// **キーはアルファベット順に並ぶ**（`body` が `title` より前に来る）。
-    @Test("home-manager が生成する TOML を読める")
+    @Test("Nix が生成するキー順でも読める")
     func parsesGeneratedTOML() throws {
         let toml = """
             [[snippets]]
@@ -41,7 +39,7 @@ struct SnippetDefinitionTests {
 
             [[snippets]]
             body = "@example"
-            title = "TwitterID"
+            title = "account"
 
             [[snippets]]
             body_command = "git branch --show-current"
@@ -49,9 +47,7 @@ struct SnippetDefinitionTests {
             """
 
         let snippets = try SnippetDefinition.parseAll(toml)
-
-        // 定義の順序は保たれる。
-        #expect(snippets.map(\.title) == ["now", "TwitterID", "branch"])
+        #expect(snippets.map(\.title) == ["now", "account", "branch"])
         #expect(snippets[2].body == .command("git branch --show-current"))
     }
 
@@ -62,19 +58,21 @@ struct SnippetDefinitionTests {
 
     @Test("body と body_command は同時に書けない")
     func rejectsBothBodies() throws {
-        let issues = try #require(thrownIssues {
-            try SnippetDefinition.parseAll(
-                #"[[snippets]]\#ntitle = "x"\#nbody = "a"\#nbody_command = "b""#)
-        })
-        #expect(issues.items[0].file == .snippets)
+        let issues = try #require(
+            thrownIssues {
+                try SnippetDefinition.parseAll(
+                    #"[[snippets]]\#ntitle = "x"\#nbody = "a"\#nbody_command = "b""#)
+            })
+        #expect(issues.items[0].file == SnippetPlugin.configurationFile)
         #expect(issues.items[0].detail.contains("同時"))
     }
 
     @Test("body も body_command も無ければエラー")
     func rejectsMissingBody() throws {
-        let issues = try #require(thrownIssues {
-            try SnippetDefinition.parseAll(#"[[snippets]]\#ntitle = "x""#)
-        })
+        let issues = try #require(
+            thrownIssues {
+                try SnippetDefinition.parseAll(#"[[snippets]]\#ntitle = "x""#)
+            })
         #expect(issues.items[0].detail.contains("body"))
     }
 
@@ -85,7 +83,6 @@ struct SnippetDefinitionTests {
         }
     }
 
-    /// 一覧では title で選ぶため、重複するとどちらが出たのか分からない。
     @Test("title の重複はエラー")
     func rejectsDuplicateTitle() {
         let toml = """
@@ -103,14 +100,15 @@ struct SnippetDefinitionTests {
     @Test("空の body_command はエラー")
     func rejectsEmptyCommand() {
         #expect(throws: ConfigIssues.self) {
-            try SnippetDefinition.parseAll(#"[[snippets]]\#ntitle = "x"\#nbody_command = "  ""#)
+            try SnippetDefinition.parseAll(
+                #"[[snippets]]\#ntitle = "x"\#nbody_command = "  ""#)
         }
     }
 
-    /// 空文字を貼りたいこともある。ここは通す。
     @Test("空の body は許す")
     func allowsEmptyText() throws {
-        let snippets = try SnippetDefinition.parseAll(#"[[snippets]]\#ntitle = "x"\#nbody = """#)
+        let snippets = try SnippetDefinition.parseAll(
+            #"[[snippets]]\#ntitle = "x"\#nbody = """#)
         #expect(snippets == [SnippetDefinition(title: "x", body: .text(""))])
     }
 }

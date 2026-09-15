@@ -1,9 +1,10 @@
 import AppKit
 import CompassCore
+import PluginKit
 
 /// 検索窓を出して、選ばれた候補を実行する。
 ///
-/// クリップボード履歴とスニペット一覧も同じ窓を使う（requirements.md 6章）。
+/// クリップボード履歴とプラグイン一覧も同じ窓を使う（requirements.md 6章）。
 /// 候補の供給元が違うだけで「絞り込む → 選ぶ → 実行」は同一。
 @MainActor
 public final class SearchController {
@@ -15,7 +16,13 @@ public final class SearchController {
         /// あらかじめ用意した候補から選ぶ。
         ///
         /// - Parameter symbolName: 入力欄の左に置く SF Symbol。今どのモードかを示す。
-        case list(placeholder: String, symbolName: String, candidates: [Candidate])
+        case list(
+            id: String, placeholder: String, symbolName: String, candidates: [Candidate]
+        )
+        /// 登録済みプラグインのコマンドから開いた一覧。
+        ///
+        /// commandID を保つため、設定の再読込後も表示中の一覧だけを更新できる。
+        case plugin(commandID: String, list: PluginList)
 
         /// どの入口か。**候補の中身は見ない。**
         ///
@@ -23,14 +30,17 @@ public final class SearchController {
         public var kind: Kind {
             switch self {
             case .search: .search
-            case .list(let placeholder, _, _): .list(placeholder)
+            case .list(let id, _, _, _): .list(id)
+            case .plugin(let commandID, _): .plugin(commandID)
             }
         }
 
         public enum Kind: Equatable, Sendable {
             case search
-            /// 一覧は placeholder で区別する（「クリップボード履歴」「スニペット」）。
+            /// 一覧は表示文言ではなく、安定した ID で区別する。
             case list(String)
+            /// 本体一覧と ID が同じでも別の入口として扱う。
+            case plugin(String)
         }
     }
 
@@ -54,6 +64,7 @@ public final class SearchController {
     private let log: Log
     private let apps: AppProvider
     private let files: FileProvider
+    private let plugins: PluginRegistry
     /// 窓を開くたびに評価する。設定のリロードがそのまま反映される。
     private let config: @MainActor () -> Config
     /// 直近の設定の不備。**検索窓を開いたときに先頭へ出す。**
@@ -78,13 +89,16 @@ public final class SearchController {
         config: @escaping @MainActor () -> Config,
         issues: @escaping @MainActor () -> [ConfigIssue] = { [] },
         configDirectory: URL = ConfigStore.defaultDirectory,
+        plugins: PluginRegistry = PluginRegistry(),
+        appRoots: [String] = AppProvider.defaultRoots,
         log: Log = .shared
     ) {
         self.config = config
         self.issues = issues
         self.configDirectory = configDirectory
+        self.plugins = plugins
         self.log = log
-        self.apps = AppProvider(log: log)
+        self.apps = AppProvider(roots: appRoots, log: log)
         self.files = FileProvider(log: log)
 
         // 走査はバックグラウンドなので、窓を開いた直後の入力は古い一覧に当たる。
@@ -110,6 +124,9 @@ public final class SearchController {
     /// 列挙できたアプリの数。動作確認用。
     public var appCount: Int { apps.count }
 
+    /// 通常検索へ公開されているプラグインコマンド数。動作確認用。
+    public var pluginCommandCount: Int { plugins.commandCount }
+
     public var isVisible: Bool { window?.isVisible == true }
 
     /// その入口を今出しているか。
@@ -129,6 +146,44 @@ public final class SearchController {
         } else {
             present(presentation)
         }
+    }
+
+    /// プラグインコマンドを通常検索から開く。
+    @discardableResult
+    public func presentPluginCommand(_ commandID: String) -> Bool {
+        guard let list = plugins.list(for: commandID) else {
+            log.error("プラグインコマンドを解決できない: \(commandID)")
+            return false
+        }
+        present(.plugin(commandID: commandID, list: list))
+        return true
+    }
+
+    /// プラグインコマンドを直接ホットキーから開閉する。
+    @discardableResult
+    public func togglePluginCommand(_ commandID: String) -> Bool {
+        // 同じ入口なら候補を作る前に閉じる。動的な候補の生成は、実際に開くときだけ。
+        if isShowing(.plugin(commandID)) {
+            dismiss()
+            return true
+        }
+        guard let list = plugins.list(for: commandID) else {
+            log.error("プラグインコマンドを解決できない: \(commandID)")
+            return false
+        }
+        toggle(.plugin(commandID: commandID, list: list))
+        return true
+    }
+
+    /// 表示中のプラグイン設定が変わったとき、入力と選択の流れを保ったまま更新する。
+    public func refreshVisiblePlugin() {
+        guard let window, case .plugin(let commandID, _) = presentation,
+            let list = plugins.list(for: commandID)
+        else { return }
+
+        presentation = .plugin(commandID: commandID, list: list)
+        listSource = list.candidates
+        updateListCandidates(in: window, matching: window.query, name: list.placeholder)
     }
 
     /// 窓は開くたびに作り直す。設定（幅・表示件数）の変更が自然に反映される。
@@ -171,23 +226,44 @@ public final class SearchController {
             // **開いた時点で設定の不備を出す。** 打ち始める前に目に入る位置が、
             // 不可視の常駐でエラーを伝えられる唯一の場所。
             window.present(
-                placeholder: "アプリ・ファイル・Web",
+                placeholder: "アプリ・コマンド・ファイル・Web",
                 symbolName: "magnifyingglass",
                 candidates: issueCandidates()
             )
-        case .list(let placeholder, let symbolName, let candidates):
-            listSource = candidates
-            window.present(
-                placeholder: placeholder, symbolName: symbolName, candidates: candidates)
-            // 空のまま開いたら、絞り込む前にそう言う。窓が入力欄だけに縮むと
-            // 「開けていない」のか「中身が無い」のか分からない。
-            if candidates.isEmpty {
-                window.setCandidates(
-                    [], matching: "",
-                    status: Self.listStatus(found: [], source: [], name: placeholder))
-            }
-            log.debug("一覧を開いた: \(placeholder) \(candidates.count) 件")
+        case .list(_, let placeholder, let symbolName, let candidates):
+            showList(
+                in: window,
+                placeholder: placeholder,
+                symbolName: symbolName,
+                candidates: candidates
+            )
+        case .plugin(_, let list):
+            showList(
+                in: window,
+                placeholder: list.placeholder,
+                symbolName: list.symbolName,
+                candidates: list.candidates
+            )
         }
+    }
+
+    private func showList(
+        in window: SearchWindow,
+        placeholder: String,
+        symbolName: String,
+        candidates: [Candidate]
+    ) {
+        listSource = candidates
+        window.present(
+            placeholder: placeholder, symbolName: symbolName, candidates: candidates)
+        // 空のまま開いたら、絞り込む前にそう言う。窓が入力欄だけに縮むと
+        // 「開けていない」のか「中身が無い」のか分からない。
+        if candidates.isEmpty {
+            window.setCandidates(
+                [], matching: "",
+                status: Self.listStatus(found: [], source: [], name: placeholder))
+        }
+        log.debug("一覧を開いた: \(placeholder) \(candidates.count) 件")
     }
 
     /// - Parameter restoringFocus: 開く前のアプリへ戻すか。
@@ -237,12 +313,11 @@ public final class SearchController {
         cancelFileSearch()
 
         switch presentation {
-        case .list(let placeholder, _, _):
-            let limit = config().appearance.maxResults
-            let found = FuzzyMatcher.filter(listSource, query: text, limit: limit)
-            window.setCandidates(
-                found, matching: text,
-                status: Self.listStatus(found: found, source: listSource, name: placeholder))
+        case .list(_, let placeholder, _, _):
+            updateListCandidates(in: window, matching: text, name: placeholder)
+
+        case .plugin(_, let list):
+            updateListCandidates(in: window, matching: text, name: list.placeholder)
 
         case .search:
             let current = config()
@@ -261,7 +336,7 @@ public final class SearchController {
             switch parsed.mode {
             case .apps:
                 files.cancel()
-                let found = apps.candidates(
+                let found = primaryCandidates(
                     matching: parsed.query, limit: current.appearance.maxResults)
                 show(found, matching: parsed.query)
 
@@ -276,6 +351,28 @@ public final class SearchController {
                 scheduleFileSearch(parsed.query, input: text, config: current)
             }
         }
+    }
+
+    private func updateListCandidates(
+        in window: SearchWindow, matching text: String, name: String
+    ) {
+        let limit = config().appearance.maxResults
+        let found = FuzzyMatcher.filter(listSource, query: text, limit: limit)
+        window.setCandidates(
+            found, matching: text,
+            status: Self.listStatus(found: found, source: listSource, name: name))
+    }
+
+    /// アプリとプラグインコマンドを一度に順位付けする。
+    ///
+    /// 別々に上限を掛けてから結合すると、後から足した側が常に不利になる。同じ候補集合へ
+    /// fuzzy マッチを 1 回だけ適用し、種類に依存しない順位と件数上限にする。
+    private func primaryCandidates(matching query: String, limit: Int) -> [Candidate] {
+        FuzzyMatcher.filter(
+            apps.allCandidates + plugins.commandCandidates,
+            query: query,
+            limit: limit
+        )
     }
 
     /// 設定の不備を候補にする。選ぶと該当のファイルが開く。
@@ -398,7 +495,7 @@ public final class SearchController {
 
         switch parsed.mode {
         case .apps:
-            completion(apps.candidates(matching: parsed.query, limit: limit))
+            completion(primaryCandidates(matching: parsed.query, limit: limit))
 
         case .files:
             files.search(
@@ -450,6 +547,10 @@ public final class SearchController {
             // 元のアプリの後ろに隠れる。
             dismiss(restoringFocus: false)
             ActionRunner.run(candidate.action, log: log)
+
+        case .invokePluginCommand(let commandID):
+            // 元のアプリは貼り先として保持したまま、同じ窓をプラグイン一覧へ切り替える。
+            _ = presentPluginCommand(commandID)
         }
     }
 

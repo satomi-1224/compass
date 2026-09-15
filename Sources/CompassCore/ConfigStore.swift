@@ -1,17 +1,17 @@
 import Foundation
 
-/// 3 つの設定ファイルを読んで保持する。
+/// 本体の 2 つの設定ファイルを読んで保持する。
 ///
 /// **解釈に失敗したファイルは直前の正常な内容を保ったまま動き続ける**
 /// （requirements.md 5.4）。設定を壊してもランチャーが死なないことを優先する。
 ///
 /// ファイルが無いのはエラーではなく「空」として扱い、既定値に戻す。
+/// プラグイン設定は各プラグインが `plugins/` 以下から読む。
 @MainActor
 public final class ConfigStore {
 
     public private(set) var config = Config()
     public private(set) var hotkeys = Hotkeys.fallback
-    public private(set) var snippets: [SnippetDefinition] = []
 
     /// 直近の読み込みで見つかった不備。**直るまで残る。**
     ///
@@ -28,14 +28,17 @@ public final class ConfigStore {
 
     private let reporter: any IssueReporting
     private let log: Log
+    private let pluginActions: Set<String>
     private var watcher: ConfigWatcher?
 
     public init(
         directory: URL = ConfigStore.defaultDirectory,
+        pluginActions: Set<String> = [],
         reporter: any IssueReporting = Notifier.shared,
         log: Log = .shared
     ) {
         self.directory = directory
+        self.pluginActions = pluginActions
         self.reporter = reporter
         self.log = log
     }
@@ -56,7 +59,7 @@ public final class ConfigStore {
 
     // MARK: - 読み込み
 
-    /// 3 ファイルを読む。**投げない。**
+    /// 2 ファイルを読む。**投げない。**
     ///
     /// 成功したファイルだけが差し替わる。失敗したファイルは直前の内容を保ち、
     /// 理由を通知する。
@@ -69,13 +72,12 @@ public final class ConfigStore {
         // **短絡評価させない。** `a || b` の形だと後続の読み込みが飛ぶ。
         let configChanged = loadConfig(&issues)
         let hotkeysChanged = loadHotkeys(&issues)
-        let snippetsChanged = loadSnippets(&issues)
 
         self.issues = issues
         if !issues.isEmpty {
             reporter.report(issues)
         }
-        if configChanged || hotkeysChanged || snippetsChanged {
+        if configChanged || hotkeysChanged {
             onChange?()
         }
         return issues
@@ -104,30 +106,14 @@ public final class ConfigStore {
             return replace(&hotkeys, with: .fallback)
         case .text(let text):
             do {
-                return replace(&hotkeys, with: try Hotkeys.parse(text))
+                return replace(
+                    &hotkeys, with: try Hotkeys.parse(text, pluginActions: pluginActions))
             } catch {
                 issues.append(contentsOf: Self.issues(from: error, file: .hotkeys))
                 return false
             }
         case .unreadable(let detail):
             issues.append(ConfigIssue(file: .hotkeys, detail: detail))
-            return false
-        }
-    }
-
-    private func loadSnippets(_ issues: inout [ConfigIssue]) -> Bool {
-        switch read(.snippets) {
-        case .missing:
-            return replace(&snippets, with: [])
-        case .text(let text):
-            do {
-                return replace(&snippets, with: try SnippetDefinition.parseAll(text))
-            } catch {
-                issues.append(contentsOf: Self.issues(from: error, file: .snippets))
-                return false
-            }
-        case .unreadable(let detail):
-            issues.append(ConfigIssue(file: .snippets, detail: detail))
             return false
         }
     }
@@ -142,7 +128,7 @@ public final class ConfigStore {
         guard watcher == nil else { return true }
         let watcher = ConfigWatcher(
             directory: directory.path,
-            fileNames: ConfigFile.allCases.map(\.fileName),
+            fileNames: ConfigFile.coreFiles.map(\.fileName),
             log: log
         )
         watcher.onChange = { [weak self] in

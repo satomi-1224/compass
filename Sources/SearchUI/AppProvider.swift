@@ -101,6 +101,9 @@ public final class AppProvider {
         FuzzyMatcher.filter(cache, query: text, limit: limit)
     }
 
+    /// プラグインコマンドとまとめて順位付けするための全候補。
+    var allCandidates: [Candidate] { cache }
+
     // MARK: - 走査
 
     /// `.app` 1 つぶんの、読み直したくない情報。

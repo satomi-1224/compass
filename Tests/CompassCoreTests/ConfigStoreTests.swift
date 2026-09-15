@@ -50,19 +50,17 @@ struct ConfigStoreTests {
         #expect(issues.isEmpty)
         #expect(recorder.issues.isEmpty)
         #expect(store.config == Config())
-        #expect(store.snippets.isEmpty)
         // 検索窓は設定が無くても使える。
         #expect(store.hotkeys.bindings.contains { $0.action == .builtin(.search) })
     }
 
-    @Test("3 ファイルを読み込む")
-    func loadsAllThreeFiles() throws {
+    @Test("本体の 2 ファイルを読み込む")
+    func loadsCoreFiles() throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
         try write("[clipboard]\nmax_items = 12", to: directory, as: .config)
         try write(#"[commands]\#nt = "open -a WezTerm""#, to: directory, as: .hotkeys)
-        try write(#"[[snippets]]\#ntitle = "now"\#nbody = "x""#, to: directory, as: .snippets)
 
         let recorder = Recorder()
         let store = ConfigStore(directory: directory, reporter: recorder)
@@ -71,7 +69,23 @@ struct ConfigStoreTests {
         #expect(issues.isEmpty)
         #expect(store.config.clipboard.maxItems == 12)
         #expect(store.hotkeys.bindings.contains { $0.key == "t" })
-        #expect(store.snippets.map(\.title) == ["now"])
+    }
+
+    @Test("登録済みプラグインを hotkeys.toml から参照できる")
+    func loadsRegisteredPluginAction() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try write(#"[actions]\#nw = "snippets""#, to: directory, as: .hotkeys)
+
+        let store = ConfigStore(
+            directory: directory,
+            pluginActions: ["snippets"],
+            reporter: Recorder()
+        )
+        let issues = store.load()
+
+        #expect(issues.isEmpty)
+        #expect(store.hotkeys.bindings.contains { $0.action == .plugin("snippets") })
     }
 
     /// **設定を壊してもランチャーが死んではいけない**（requirements.md 5.4）。
@@ -195,22 +209,15 @@ struct ConfigStoreTests {
         store.stopWatching()
     }
 
-    /// 失敗した watcher を残すと、以後 guard に弾かれて何も監視しないまま
-    /// 「張れている」と答え続ける。
-    @Test("監視に失敗しても、状況が変われば張り直せる")
-    func canRetryAfterFailure() throws {
+    @Test("親も無い設定ディレクトリは存在する祖先から作成を待つ")
+    func watchesAncestorWhenParentIsMissing() throws {
         let base = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("compass-test-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: base) }
 
-        // 親ごと存在しないので、どこも監視できない。
+        // 親ごと存在しなくても、一番近い既存の祖先まで上って監視する。
         let directory = base.appendingPathComponent("compass", isDirectory: true)
         let store = ConfigStore(directory: directory, reporter: Recorder())
-        #expect(store.startWatching() == false)
-
-        // 親ができれば張れるようになる。失敗した watcher が残っていれば true を
-        // 返せないまま何も監視しない。
-        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         #expect(store.startWatching())
         store.stopWatching()
     }

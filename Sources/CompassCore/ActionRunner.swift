@@ -13,7 +13,7 @@ extension String {
     /// 末尾の改行だけを落とす。
     ///
     /// `trimmingCharacters(in: .newlines)` は先頭も削るため使わない。
-    /// 意図して先頭を空行で始めるスニペットを壊さないようにする。
+    /// 意図して先頭を空行で始める貼り付け内容を壊さないようにする。
     func trimmingTrailingNewlines() -> String {
         var result = self
         while result.hasSuffix("\n") || result.hasSuffix("\r") {
@@ -25,8 +25,8 @@ extension String {
 
 /// 外部コマンドを実行する。
 ///
-/// ホットキーの実行モデルは**外部コマンド実行のみ**（requirements.md 3.3）。
-/// 組み込みアクションは UI を伴うため、ここでは扱わず呼び出し側が振り分ける。
+/// 外部コマンドと候補の終端アクションを実行する。本体アクションとプラグインコマンドは
+/// UI 遷移を伴うため、ここでは扱わず呼び出し側が振り分ける（requirements.md 3.3）。
 ///
 /// `/bin/sh -c` を通すため、`~` や `$HOME` の展開、`&&` や末尾の `&` が
 /// そのまま使える（requirements.md 7.3 の MagicBoard トグルがこれに依存する）。
@@ -69,6 +69,10 @@ public enum ActionRunner {
             paste(text, log: log)
         case .pasteCommandOutput(let command):
             pasteOutput(of: command, log: log)
+        case .invokePluginCommand(let commandID):
+            // UI とレジストリを持たない層では解決できない。誤ってここへ渡された場合に
+            // 黙って消えないよう、識別子だけをログへ残す。
+            log.error("プラグインコマンドは検索コントローラから実行する: \(commandID)")
         }
     }
 
@@ -121,7 +125,7 @@ public enum ActionRunner {
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
                         Notifier.shared.report(
-                            title: "スニペットのコマンドが何も出力しなかった", body: command)
+                            title: "貼り付けるコマンドが何も出力しなかった", body: command)
                     }
                 }
                 return
@@ -178,9 +182,8 @@ public enum ActionRunner {
     /// クリップボードへ載せる。**送出はしない**（テストから安全に呼べる）。
     ///
     /// **「履歴へ残すな」の印を付ける。** compass 自身が貼った内容がクリップボード
-    /// 履歴へ入ると、スニペットの `body_command` で取り出した秘密（パスワード
-    /// マネージャの読み出しなど）が平文でディスクに残る。貼る元（スニペット定義や
-    /// 履歴そのもの）は別に残っているので、履歴に入らなくても失うものはない。
+    /// 履歴へ入ると、外部コマンドで取り出した秘密などが平文でディスクに残りうる。
+    /// 貼る元の定義や履歴そのものは別に残っているので、履歴に入らなくても失うものはない。
     static func copyForPaste(_ text: String) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
